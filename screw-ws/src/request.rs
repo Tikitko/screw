@@ -1,6 +1,7 @@
 use super::*;
 use hyper::http::request::Parts;
 use hyper::upgrade::{OnUpgrade, Upgraded};
+use hyper_util::rt::TokioIo;
 use screw_components::dyn_fn::DFn;
 use screw_core::routing::actix::Path;
 use std::collections::HashMap;
@@ -35,7 +36,7 @@ pub struct WebSocketUpgrade<Stream>
 where
     Stream: Send + Sync + 'static,
 {
-    pub(super) convert_stream_fn: DFn<WebSocketStream<Upgraded>, Stream>,
+    pub(super) convert_stream_fn: DFn<WebSocketStream<TokioIo<Upgraded>>, Stream>,
 }
 
 impl<Stream> WebSocketUpgrade<Stream>

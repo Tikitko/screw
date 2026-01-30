@@ -2,6 +2,8 @@ use futures::stream::SplitStream;
 use futures::{SinkExt, StreamExt};
 use hyper::http::request::Parts;
 use hyper::http::Extensions;
+use hyper::upgrade::Upgraded;
+use hyper_util::rt::TokioIo;
 use screw_components::dyn_fn::DFn;
 use screw_components::dyn_result::DError;
 use serde::{Deserialize, Serialize};
@@ -44,7 +46,6 @@ pub enum ApiChannelReceiverError {
 pub mod first {
     use super::*;
     use futures::stream::SplitSink;
-    use hyper::upgrade::Upgraded;
     use screw_components::dyn_fn::AsDynFn;
     use screw_components::dyn_result::DResult;
     use serde::Serialize;
@@ -53,11 +54,11 @@ pub mod first {
     use tokio_tungstenite::WebSocketStream;
 
     pub struct ApiChannelSender {
-        sink: SplitSink<WebSocketStream<Upgraded>, Message>,
+        sink: SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>,
     }
 
     impl ApiChannelSender {
-        pub fn with_sink(sink: SplitSink<WebSocketStream<Upgraded>, Message>) -> Self {
+        pub fn with_sink(sink: SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>) -> Self {
             Self { sink }
         }
 
@@ -78,11 +79,11 @@ pub mod first {
     }
 
     pub struct ApiChannelReceiver {
-        stream: SplitStream<WebSocketStream<Upgraded>>,
+        stream: SplitStream<WebSocketStream<TokioIo<Upgraded>>>,
     }
 
     impl ApiChannelReceiver {
-        pub fn with_stream(stream: SplitStream<WebSocketStream<Upgraded>>) -> Self {
+        pub fn with_stream(stream: SplitStream<WebSocketStream<TokioIo<Upgraded>>>) -> Self {
             Self { stream }
         }
 
@@ -106,7 +107,6 @@ pub mod first {
 pub mod second {
     use super::*;
     use futures::stream::SplitSink;
-    use hyper::upgrade::Upgraded;
     use screw_components::dyn_result::DResult;
     use serde::Serialize;
     use tokio_tungstenite::tungstenite::Message;
@@ -116,7 +116,7 @@ pub mod second {
     where
         Send: Serialize + std::marker::Send + 'static,
     {
-        pub(super) sink: SplitSink<WebSocketStream<Upgraded>, Message>,
+        pub(super) sink: SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>,
         pub(super) convert_typed_message_fn: DFn<Send, DResult<String>>,
     }
 
@@ -131,7 +131,7 @@ pub mod second {
                 .await
                 .map_err(ApiChannelSenderError::Convert)?;
             self.sink
-                .send(Message::Text(generic_message))
+                .send(Message::Text(generic_message.into()))
                 .await
                 .map_err(ApiChannelSenderError::Tungstenite)?;
             Ok(())
@@ -149,7 +149,7 @@ pub mod second {
     where
         for<'de> Receive: Deserialize<'de> + std::marker::Send + 'static,
     {
-        pub(super) stream: SplitStream<WebSocketStream<Upgraded>>,
+        pub(super) stream: SplitStream<WebSocketStream<TokioIo<Upgraded>>>,
         pub(super) convert_generic_message_fn: DFn<String, DResult<Receive>>,
     }
 
@@ -167,7 +167,7 @@ pub mod second {
                 .ok_or(ApiChannelReceiverError::NoMessage)?;
             let message_type = message_type_result.map_err(ApiChannelReceiverError::Tungstenite)?;
             let generic_message = match message_type {
-                Message::Text(generic_message) => Ok(generic_message),
+                Message::Text(generic_message) => Ok(generic_message.to_string()),
                 Message::Ping(_) | Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => {
                     Err(ApiChannelReceiverError::UnsupportedMessage)
                 }

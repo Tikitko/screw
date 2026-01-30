@@ -1,6 +1,7 @@
 use super::super::*;
 use futures::{future, StreamExt};
 use hyper::upgrade::Upgraded;
+use hyper_util::rt::TokioIo;
 use screw_ws::WebSocketStreamConverter;
 use serde::Deserialize;
 use serde::Serialize;
@@ -18,7 +19,7 @@ where
 {
     async fn convert_stream(
         &self,
-        stream: WebSocketStream<Upgraded>,
+        stream: WebSocketStream<TokioIo<Upgraded>>,
     ) -> channel::ApiChannel<Send, Receive> {
         let (sink, stream) = stream.split();
 

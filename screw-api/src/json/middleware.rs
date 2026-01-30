@@ -1,9 +1,11 @@
 use super::super::*;
+use hyper::body::Incoming;
 use hyper::http::request::Parts;
-use hyper::{header, Body, StatusCode};
+use hyper::{header, StatusCode};
 use response::ApiResponseContentBase;
 use screw_components::dyn_fn::DFnOnce;
 use screw_components::dyn_result::DResult;
+use screw_core::body::ResponseBody;
 use screw_core::request::Request;
 use screw_core::response::Response;
 use screw_core::routing::middleware::Middleware;
@@ -38,10 +40,11 @@ where
             response::ApiResponse<RsContentSuccess, RsContentFailure>,
         >,
     ) -> Response {
-        async fn convert<Data>(parts: &Parts, body: Body) -> DResult<Data>
+        async fn convert<Data>(parts: &Parts, body: Incoming) -> DResult<Data>
         where
             for<'de> Data: Deserialize<'de>,
         {
+            use http_body_util::BodyExt;
             let content_type = match parts.headers.get(header::CONTENT_TYPE) {
                 Some(header_value) => Some(header_value.to_str()?),
                 None => None,
@@ -51,7 +54,7 @@ where
                 Some("") | None => Err(ApiRequestContentTypeError::Missed),
                 Some(_) => Err(ApiRequestContentTypeError::Incorrect),
             }?;
-            let json_bytes = hyper::body::to_bytes(body).await?;
+            let json_bytes = body.collect().await?.to_bytes();
             let data = serde_json::from_slice(&json_bytes)?;
             Ok(data)
         }
@@ -75,7 +78,7 @@ where
 
         let api_response = next(api_request).await;
 
-        let http_response_result: DResult<hyper::Response<Body>> = (|| {
+        let http_response_result: DResult<hyper::Response<ResponseBody>> = (|| {
             let content = api_response.content;
 
             let status_code = content.status_code();
@@ -88,7 +91,7 @@ where
             let response = hyper::Response::builder()
                 .status(status_code)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json_bytes))?;
+                .body(screw_core::body::full(json_bytes))?;
 
             Ok(response)
         })();
@@ -96,7 +99,7 @@ where
         let http_response = http_response_result.unwrap_or_else(|_| {
             hyper::Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::empty())
+                .body(screw_core::body::empty())
                 .unwrap()
         });
 
