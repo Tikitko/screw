@@ -1,7 +1,9 @@
 use super::*;
 use futures_util::{FutureExt, TryFutureExt};
+use hyper::body::Incoming;
 use hyper::header::HeaderValue;
-use hyper::{upgrade, Body, Method, StatusCode, Version};
+use hyper::{upgrade, Method, StatusCode, Version};
+use hyper_util::rt::TokioIo;
 use screw_components::dyn_fn::DFnOnce;
 use screw_core::request::Request;
 use screw_core::response::Response;
@@ -14,13 +16,13 @@ use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
 use tokio_tungstenite::WebSocketStream;
 
-fn is_get_method(request: &hyper::Request<Body>) -> bool {
+fn is_get_method(request: &hyper::Request<Incoming>) -> bool {
     request.method() == Method::GET
 }
-fn is_http_version_11_or_larger(request: &hyper::Request<Body>) -> bool {
+fn is_http_version_11_or_larger(request: &hyper::Request<Incoming>) -> bool {
     request.version() >= Version::HTTP_11
 }
-fn is_connection_header_upgrade(request: &hyper::Request<Body>) -> bool {
+fn is_connection_header_upgrade(request: &hyper::Request<Incoming>) -> bool {
     request
         .headers()
         .get("Connection")
@@ -31,7 +33,7 @@ fn is_connection_header_upgrade(request: &hyper::Request<Body>) -> bool {
         })
         .unwrap_or(false)
 }
-fn is_upgrade_header_web_socket(request: &hyper::Request<Body>) -> bool {
+fn is_upgrade_header_web_socket(request: &hyper::Request<Incoming>) -> bool {
     request
         .headers()
         .get("Upgrade")
@@ -39,19 +41,19 @@ fn is_upgrade_header_web_socket(request: &hyper::Request<Body>) -> bool {
         .map(|h| h.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false)
 }
-fn is_web_socket_version_header_13(request: &hyper::Request<Body>) -> bool {
+fn is_web_socket_version_header_13(request: &hyper::Request<Incoming>) -> bool {
     request
         .headers()
         .get("Sec-WebSocket-Version")
         .map(|h| h == "13")
         .unwrap_or(false)
 }
-fn get_web_socket_key_header(request: &hyper::Request<Body>) -> Option<&HeaderValue> {
+fn get_web_socket_key_header(request: &hyper::Request<Incoming>) -> Option<&HeaderValue> {
     request.headers().get("Sec-WebSocket-Key")
 }
 
 fn try_upgradable(
-    http_request: &mut hyper::Request<Body>,
+    http_request: &mut hyper::Request<Incoming>,
 ) -> Result<WebSocketUpgradable, ProtocolError> {
     if !is_get_method(http_request) {
         return Err(ProtocolError::WrongHttpMethod);
@@ -158,7 +160,12 @@ where
                 let future = upgradable
                     .on_upgrade
                     .and_then(move |upgraded| {
-                        WebSocketStream::from_raw_socket(upgraded, Role::Server, config).map(Ok)
+                        WebSocketStream::from_raw_socket(
+                            TokioIo::new(upgraded),
+                            Role::Server,
+                            config,
+                        )
+                        .map(Ok)
                     })
                     .and_then(move |stream| (ws_response.upgraded_fn)(stream).map(Ok));
 
@@ -169,7 +176,7 @@ where
                     .header("Connection", "Upgrade")
                     .header("Upgrade", "websocket")
                     .header("Sec-WebSocket-Accept", upgradable.key)
-                    .body(Body::empty())
+                    .body(screw_core::body::empty())
                     .unwrap()
             }
             Err(protocol_error) => match protocol_error {
@@ -178,7 +185,7 @@ where
                 }
                 _ => hyper::Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body(Body::empty())
+                    .body(screw_core::body::empty())
                     .unwrap(),
             },
         };

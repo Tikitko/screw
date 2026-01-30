@@ -2,7 +2,8 @@ pub type ResponderFactory<Extensions> = first::ResponderFactory<Extensions>;
 pub type FResponderFactory<Extensions> = second::ResponderFactory<Extensions>;
 
 use super::*;
-use hyper::Body;
+use crate::body::ResponseBody;
+use hyper::body::Incoming;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -89,9 +90,9 @@ impl<Extensions> server::Responder for Responder<Extensions>
 where
     Extensions: Sync + Send + 'static,
 {
-    type ResponseFuture = Pin<Box<dyn Future<Output = hyper::Response<Body>> + Send>>;
+    type ResponseFuture = Pin<Box<dyn Future<Output = hyper::Response<ResponseBody>> + Send>>;
 
-    fn response(&mut self, http_request: hyper::Request<Body>) -> Self::ResponseFuture {
+    fn response(&self, http_request: hyper::Request<Incoming>) -> Self::ResponseFuture {
         let remote_addr = self.remote_addr;
         let router = self.router.clone();
         let extensions = self.extensions.clone();

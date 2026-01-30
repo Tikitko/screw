@@ -1,9 +1,11 @@
 use super::super::*;
+use hyper::body::Incoming;
 use hyper::http::request::Parts;
-use hyper::{body, header, Body, StatusCode};
+use hyper::{header, StatusCode};
 use response::ApiResponseContentBase;
 use screw_components::dyn_fn::DFnOnce;
 use screw_components::dyn_result::DResult;
+use screw_core::body::ResponseBody;
 use screw_core::request::Request;
 use screw_core::response::Response;
 use screw_core::routing::middleware::Middleware;
@@ -36,10 +38,11 @@ where
             response::ApiResponse<RsContentSuccess, RsContentFailure>,
         >,
     ) -> Response {
-        async fn convert<Data>(parts: &Parts, body: Body) -> DResult<Data>
+        async fn convert<Data>(parts: &Parts, body: Incoming) -> DResult<Data>
         where
             for<'de> Data: Deserialize<'de>,
         {
+            use http_body_util::BodyExt;
             let content_type = match parts.headers.get(header::CONTENT_TYPE) {
                 Some(header_value) => Some(header_value.to_str()?),
                 None => None,
@@ -49,7 +52,7 @@ where
                 Some("") | None => Err(ApiRequestContentTypeError::Missed),
                 Some(_) => Err(ApiRequestContentTypeError::Incorrect),
             }?;
-            let bytes = body::to_bytes(body).await?;
+            let bytes = body.collect().await?.to_bytes();
             let xml_string = String::from_utf8(bytes.to_vec())?;
             let data = quick_xml::de::from_str(xml_string.as_str())?;
             Ok(data)
@@ -74,7 +77,7 @@ where
 
         let api_response = next(api_request).await;
 
-        let http_response_result: DResult<hyper::Response<Body>> = (|| {
+        let http_response_result: DResult<hyper::Response<ResponseBody>> = (|| {
             let content = api_response.content;
 
             let status_code = content.status_code();
@@ -83,7 +86,7 @@ where
             let response = hyper::Response::builder()
                 .status(status_code)
                 .header(header::CONTENT_TYPE, "application/xml")
-                .body(Body::from(xml_string))?;
+                .body(screw_core::body::full(xml_string))?;
 
             Ok(response)
         })();
@@ -91,7 +94,7 @@ where
         let http_response = http_response_result.unwrap_or_else(|_| {
             hyper::Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::empty())
+                .body(screw_core::body::empty())
                 .unwrap()
         });
 

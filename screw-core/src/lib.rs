@@ -1,3 +1,4 @@
+pub mod body;
 pub mod request;
 pub mod responder_factory;
 pub mod response;

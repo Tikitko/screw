@@ -1,5 +1,5 @@
-use hyper::Body;
+use crate::body::ResponseBody;
 
 pub struct Response {
-    pub http: hyper::Response<Body>,
+    pub http: hyper::Response<ResponseBody>,
 }

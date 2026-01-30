@@ -59,7 +59,8 @@ pub mod first {
 
 pub mod second {
     use super::*;
-    use hyper::{Body, Method, Request};
+    use hyper::body::Incoming;
+    use hyper::{Method, Request};
     use screw_components::dyn_fn::DFn;
 
     pub struct Router<ORq, ORs>
@@ -73,7 +74,7 @@ pub mod second {
 
     impl<ORq, ORs> Router<ORq, ORs>
     where
-        ORq: AsRef<Request<Body>> + Send + 'static,
+        ORq: AsRef<Request<Incoming>> + Send + 'static,
         ORs: Send + 'static,
     {
         pub async fn process(&self, request: ORq) -> ORs {

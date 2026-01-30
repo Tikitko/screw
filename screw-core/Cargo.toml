@@ -1,11 +1,13 @@
 [package]
 name = "screw-core"
-version = "0.0.1"
-edition = "2021"
+version = "0.0.2"
+edition = "2024"
 
 [dependencies]
 screw-components = { path = "../screw-components" }
-hyper = { version = "0.14.26", features = ["full"] }
+hyper = { version = "1.8.1", features = ["full"] }
+http-body-util = "0.1.0"
+bytes = "1.11.0"
 async-trait = { version = "0.1.68" }
 actix-router = "0.5.1"
 url = "2.3.1"

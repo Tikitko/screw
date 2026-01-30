@@ -1,23 +1,25 @@
 [package]
 name = "screw-api"
-version = "0.0.1"
-edition = "2021"
+version = "0.0.2"
+edition = "2024"
 
 [dependencies]
 screw-components = { path = "../screw-components" }
 screw-core = { path = "../screw-core" }
 screw-ws = { path = "../screw-ws", optional = true }
-hyper = { version = "0.14.26", features = ["http1", "http2"] }
-tokio-tungstenite = { version = "0.18.0", optional = true }
+hyper = { version = "1.8.1", features = ["http1", "http2", "server"] }
+hyper-util = { version = "0.1.19", features = ["tokio"], optional = true }
+http-body-util = { version = "0.1.0", optional = true }
+tokio-tungstenite = { version = "0.28.0", optional = true }
 serde = { version = "1.0.160", features = ["derive"] }
 serde_json = { version = "1.0.96", optional = true }
-quick-xml = { version = "0.28.2", features = ["serialize"], optional = true }
+quick-xml = { version = "0.39.0", features = ["serialize"], optional = true }
 async-trait = { version = "0.1.68", optional = true }
 futures = { version = "0.3.28", optional = true }
 derive-error = { version = "0.0.5", optional = true }
 
 [features]
 default = []
-ws = ["screw-ws", "tokio-tungstenite", "futures"]
-json = ["derive-error", "async-trait", "serde_json"]
-xml = ["derive-error", "async-trait", "quick-xml"]
+ws = ["screw-ws", "tokio-tungstenite", "futures", "hyper-util"]
+json = ["derive-error", "async-trait", "serde_json", "http-body-util"]
+xml = ["derive-error", "async-trait", "quick-xml", "http-body-util"]
