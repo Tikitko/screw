@@ -54,54 +54,44 @@ where
         }
     }
 
-    pub fn scoped_middleware<Rq, Rs, NM, F>(
+    pub fn scoped_middleware<NM, F>(
         self,
         scope_path: &'static str,
         middleware: NM,
         handler: F,
     ) -> Self
     where
-        M: middleware::Middleware<Rq, Rs, Request = ORq, Response = ORs>,
-        Rq: Send + 'static,
-        Rs: Send + 'static,
         NM: Send + Sync + 'static,
-        F: FnOnce(Routes<Rq, Rs, NM>) -> Routes<Rq, Rs, NM>,
+        F: FnOnce(
+            Routes<ORq, ORs, middleware::Chained<M, NM>>,
+        ) -> Routes<ORq, ORs, middleware::Chained<M, NM>>,
     {
-        let Routes {
-            handlers: middleware_handlers,
-            ..
-        } = handler(Routes {
-            scope_path: self.scope_path.clone() + scope_path,
-            middleware: Arc::new(middleware),
-            handlers: Vec::new(),
+        let Self {
+            scope_path: outer_scope_path,
+            middleware: outer_middleware,
+            handlers,
+        } = self;
+        let Routes { handlers, .. } = handler(Routes {
+            scope_path: outer_scope_path.clone() + scope_path,
+            middleware: Arc::new(middleware::Chained::new(
+                outer_middleware.clone(),
+                Arc::new(middleware),
+            )),
+            handlers,
         });
-        let handlers = {
-            let mut handlers = self.handlers;
-            for (methods, path, middleware_handler) in middleware_handlers {
-                Self::add_route_to_handlers(
-                    route::first::Route::with_methods(methods)
-                        .and_path(path)
-                        .and_handler(middleware_handler),
-                    &mut handlers,
-                    self.middleware.clone(),
-                )
-            }
-            handlers
-        };
         Self {
-            scope_path: self.scope_path,
-            middleware: self.middleware,
+            scope_path: outer_scope_path,
+            middleware: outer_middleware,
             handlers,
         }
     }
 
-    pub fn middleware<Rq, Rs, NM, F>(self, middleware: NM, handler: F) -> Self
+    pub fn middleware<NM, F>(self, middleware: NM, handler: F) -> Self
     where
-        M: middleware::Middleware<Rq, Rs, Request = ORq, Response = ORs>,
-        Rq: Send + 'static,
-        Rs: Send + 'static,
         NM: Send + Sync + 'static,
-        F: FnOnce(Routes<Rq, Rs, NM>) -> Routes<Rq, Rs, NM>,
+        F: FnOnce(
+            Routes<ORq, ORs, middleware::Chained<M, NM>>,
+        ) -> Routes<ORq, ORs, middleware::Chained<M, NM>>,
     {
         self.scoped_middleware("", middleware, handler)
     }
