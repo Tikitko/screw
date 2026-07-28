@@ -290,4 +290,29 @@ mod tests {
             assert!(allowed_methods.is_empty());
         }
     }
+
+    #[test]
+    fn earliest_registered_of_two_matching_patterns_wins() {
+        let labelled = |label: &'static str, path: &'static str| {
+            first::Router::with_fallback_handler(|_: RoutedRequest<()>| async { "fallback" })
+                .and_routes(move |r| {
+                    r.route(
+                        route::first::Route::with_method(&Method::GET)
+                            .and_path(path)
+                            .and_handler(move |_: RoutedRequest<()>| async move { label }),
+                    )
+                    .route(
+                        route::first::Route::with_method(&Method::GET)
+                            .and_path("/api/x")
+                            .and_handler(|_: RoutedRequest<()>| async { "second" }),
+                    )
+                })
+        };
+
+        let (_, _, response) = resolve(&labelled("first", "/api/x"), &Method::GET, "/api/x");
+        assert_eq!(response, "first");
+
+        let (_, _, response) = resolve(&labelled("first", "/api/{id}"), &Method::GET, "/api/x");
+        assert_eq!(response, "first");
+    }
 }
