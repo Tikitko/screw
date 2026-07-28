@@ -1,6 +1,5 @@
 [package]
 name = "screw-core"
-version = "0.0.2"
 edition = "2024"
 
 [dependencies]
@@ -13,4 +12,5 @@ actix-router = "0.5.1"
 url = "2.3.1"
 
 [dev-dependencies]
-tokio = { version = "1.27.0", features = ["rt", "macros"] }
+tokio = { version = "1.27.0", features = ["rt", "rt-multi-thread", "macros", "net"] }
+hyper-util = { version = "0.1.19", features = ["tokio"] }

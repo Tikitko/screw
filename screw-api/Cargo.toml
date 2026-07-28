@@ -1,6 +1,5 @@
 [package]
 name = "screw-api"
-version = "0.0.2"
 edition = "2024"
 
 [dependencies]
@@ -18,8 +17,28 @@ async-trait = { version = "0.1.68", optional = true }
 futures = { version = "0.3.28", optional = true }
 derive-error = { version = "0.0.5", optional = true }
 
+[dev-dependencies]
+tokio = { version = "1.27.0", features = ["rt-multi-thread", "macros", "net", "sync"] }
+hyper-util = { version = "0.1.19", features = ["tokio"] }
+
 [features]
 default = []
 ws = ["screw-ws", "tokio-tungstenite", "futures", "hyper-util"]
 json = ["derive-error", "async-trait", "serde_json", "http-body-util"]
 xml = ["derive-error", "async-trait", "quick-xml", "http-body-util"]
+
+[[test]]
+name = "middleware_nesting"
+required-features = ["json"]
+
+[[example]]
+name = "json_api"
+required-features = ["json"]
+
+[[example]]
+name = "typed_middleware"
+required-features = ["json"]
+
+[[example]]
+name = "websocket_chat"
+required-features = ["json", "ws"]
