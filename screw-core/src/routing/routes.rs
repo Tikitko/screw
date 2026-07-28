@@ -114,53 +114,30 @@ where
             middleware,
             mut handlers,
         } = self;
-        {
-            Self::add_route_to_handlers(
-                route::first::Route::with_methods(route.methods)
-                    .and_path(scope_path.clone() + route.path.as_str())
-                    .and_handler(route.handler),
-                &mut handlers,
-                middleware.clone(),
-            )
-        }
-        Self {
-            scope_path,
-            middleware,
-            handlers,
-        }
-    }
 
-    fn add_route_to_handlers<FRq, Rq, IRs, Rs, HFn, HFut>(
-        route: route::third::Route<FRq, IRs, HFn, HFut>,
-        handlers: &mut Vec<(Vec<&'static Method>, String, DFn<ORq, ORs>)>,
-        middleware: Arc<M>,
-    ) where
-        M: middleware::Middleware<Rq, Rs, Request = ORq, Response = ORs>,
-        FRq: From<Rq> + Send + 'static,
-        Rq: Send + 'static,
-        IRs: Into<Rs> + Send + 'static,
-        Rs: Send + 'static,
-        HFn: Fn(FRq) -> HFut + Send + Sync + 'static,
-        HFut: Future<Output = IRs> + Send + 'static,
-    {
+        let path = scope_path.clone() + route.path.as_str();
         let handler = Arc::new(route.handler);
-        let middleware = middleware.clone();
+        let route_middleware = middleware.clone();
+
         handlers.push((
             route.methods,
-            route.path,
+            path,
             Box::new(move |request| {
                 let handler = handler.clone();
-                let middleware = middleware.clone();
+                let middleware = route_middleware.clone();
                 Box::pin(async move {
                     let next: DFnOnce<Rq, Rs> = Box::new(move |rq| {
-                        Box::pin(async move {
-                            let rs = handler(From::from(rq)).await.into();
-                            rs
-                        })
+                        Box::pin(async move { handler(From::from(rq)).await.into() })
                     });
                     middleware.respond(request, next).await
                 })
             }),
         ));
+
+        Self {
+            scope_path,
+            middleware,
+            handlers,
+        }
     }
 }
