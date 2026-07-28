@@ -1,7 +1,7 @@
 use super::super::*;
 use hyper::body::Incoming;
 use hyper::http::request::Parts;
-use hyper::{header, StatusCode};
+use hyper::{StatusCode, header};
 use response::ApiResponseContentBase;
 use screw_components::dyn_fn::DFnOnce;
 use screw_components::dyn_result::DResult;
@@ -15,6 +15,20 @@ use serde::Deserialize;
 #[derive(Clone, Copy, Debug)]
 pub struct JsonApiMiddlewareConverter {
     pub pretty_printed: bool,
+    pub max_body_size: usize,
+}
+
+impl JsonApiMiddlewareConverter {
+    pub const DEFAULT_MAX_BODY_SIZE: usize = 2 * 1024 * 1024;
+}
+
+impl Default for JsonApiMiddlewareConverter {
+    fn default() -> Self {
+        Self {
+            pretty_printed: false,
+            max_body_size: Self::DEFAULT_MAX_BODY_SIZE,
+        }
+    }
 }
 
 #[async_trait]
@@ -40,27 +54,22 @@ where
             response::ApiResponse<RsContentSuccess, RsContentFailure>,
         >,
     ) -> Response {
-        async fn convert<Data>(parts: &Parts, body: Incoming) -> DResult<Data>
+        async fn convert<Data>(parts: &Parts, body: Incoming, max_body_size: usize) -> DResult<Data>
         where
             for<'de> Data: Deserialize<'de>,
         {
-            use http_body_util::BodyExt;
-            let content_type = match parts.headers.get(header::CONTENT_TYPE) {
-                Some(header_value) => Some(header_value.to_str()?),
-                None => None,
-            };
-            match content_type {
-                Some("application/json") => Ok(()),
-                Some("") | None => Err(ApiRequestContentTypeError::Missed),
-                Some(_) => Err(ApiRequestContentTypeError::Incorrect),
-            }?;
-            let json_bytes = body.collect().await?.to_bytes();
+            use http_body_util::{BodyExt, Limited};
+            check_content_type(&parts.headers, "application/json")?;
+            let json_bytes = Limited::new(body, max_body_size)
+                .collect()
+                .await?
+                .to_bytes();
             let data = serde_json::from_slice(&json_bytes)?;
             Ok(data)
         }
 
         let (http_parts, http_body) = routed_request.origin.http.into_parts();
-        let data_result = convert(&http_parts, http_body).await;
+        let data_result = convert(&http_parts, http_body, self.max_body_size).await;
 
         let request_content = RqContent::create(request::ApiRequestOriginContent {
             path: routed_request.path,

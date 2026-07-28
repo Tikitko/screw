@@ -11,4 +11,6 @@ bytes = "1.11.0"
 async-trait = { version = "0.1.68" }
 actix-router = "0.5.1"
 url = "2.3.1"
-urlencoding = "2.1.2"
+
+[dev-dependencies]
+tokio = { version = "1.27.0", features = ["rt", "macros"] }
