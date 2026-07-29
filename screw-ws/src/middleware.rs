@@ -28,7 +28,7 @@ fn is_connection_header_upgrade(request: &hyper::Request<Incoming>) -> bool {
         .get("Connection")
         .and_then(|h| h.to_str().ok())
         .map(|h| {
-            h.split(|c| c == ' ' || c == ',')
+            h.split([' ', ','])
                 .any(|p| p.eq_ignore_ascii_case("Upgrade"))
         })
         .unwrap_or(false)
@@ -141,10 +141,9 @@ where
                 let request_upgrade = WebSocketUpgrade {
                     convert_stream_fn: Box::new(move |generic_stream| {
                         let stream_converter = stream_converter.clone();
-                        Box::pin(async move {
-                            let stream = stream_converter.convert_stream(generic_stream).await;
-                            stream
-                        })
+                        Box::pin(
+                            async move { stream_converter.convert_stream(generic_stream).await },
+                        )
                     }),
                 };
 

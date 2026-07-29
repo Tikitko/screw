@@ -166,8 +166,7 @@ pub mod second {
                 allowed_methods,
                 origin: request,
             };
-            let response = handler(request).await;
-            response
+            handler(request).await
         }
     }
 }
