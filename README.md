@@ -284,8 +284,9 @@ ResponderFactory::with_router(router)
 
 - Path patterns come from [`actix-router`](https://docs.rs/actix-router): `/post/{id}`, `/files/{path}*`, and so on. Matched segments are read via `path.get("id")`.
 - `Route::with_method`, `with_methods`, and `with_any_method` control method matching; `with_any_method` matches every method.
-- The query string is parsed into a `HashMap<String, String>` on `RoutedRequest::query`.
+- The query string arrives as `RoutedRequest::query`, a `Query`. It is parsed on the first `get` or `iter` and the result is cached, so a handler that ignores the query does not pay for parsing it. Repeated keys keep the last value.
 - When two registered patterns match the same request, **the one registered first wins**.
+- Patterns are indexed by the literal segments they start with, so the router only matches a request against the patterns that could possibly match it. Matching cost does not grow with the size of the route table.
 - When a path matches but the method does not, the fallback handler runs with `allowed_methods` filled in from every route sharing that pattern — enough to answer `405` with a correct `Allow` header. For an unknown path, `allowed_methods` is empty.
 - Percent-escapes in the path are decoded, except `%2F`, `%2B` and `%25`, which stay encoded so an escaped slash cannot forge an extra path segment. A malformed or non-UTF-8 escape leaves the path untouched rather than emptying it.
 
@@ -358,7 +359,7 @@ async fn logging(request: Mid, next: DFnOnce<Mid, MidRs>) -> MidRs {
 ```rust
 pub struct ApiRequestOriginContent<Data, Extensions> {
     pub path: Path<String>,
-    pub query: HashMap<String, String>,
+    pub query: Query,
     pub http_parts: Parts,
     pub remote_addr: SocketAddr,
     pub extensions: Arc<Extensions>,

@@ -4,7 +4,6 @@ use hyper::upgrade::{OnUpgrade, Upgraded};
 use hyper_util::rt::TokioIo;
 use screw_components::dyn_fn::DFn;
 use screw_core::routing::actix::Path;
-use std::collections::HashMap;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -13,7 +12,7 @@ use tokio_tungstenite::WebSocketStream;
 
 pub struct WebSocketOriginContent<Extensions> {
     pub path: Path<String>,
-    pub query: HashMap<String, String>,
+    pub query: screw_core::routing::query::Query,
     pub http_parts: Parts,
     pub remote_addr: SocketAddr,
     pub extensions: Arc<Extensions>,

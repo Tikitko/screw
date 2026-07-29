@@ -1,5 +1,5 @@
 use super::*;
-use actix::{Path, Quoter, ResourceDef, Router as InnerRouter};
+use actix::{Path, Quoter, ResourceDef};
 use hyper::Method;
 use screw_components::dyn_fn::DFn;
 use std::collections::{HashMap, HashSet};
@@ -12,8 +12,8 @@ pub struct RoutedRequest<ORq> {
     /// decoded except for `%2F`, `%25` and `%2B`, which stay encoded so that an
     /// escaped separator cannot be mistaken for a real one.
     pub path: Path<String>,
-    /// The query string, parsed. Repeated keys keep the last value.
-    pub query: HashMap<String, String>,
+    /// The query string. Parsed on first access, not on every request.
+    pub query: query::Query,
     /// The methods the matched path does accept, filled in only when no route
     /// matched. Non-empty means the path exists but the method is wrong -- a
     /// 405 with this as the `Allow` header -- and empty means no such path,
@@ -31,7 +31,63 @@ fn requote_path(path: &str) -> String {
     }
 }
 
-type RouteEntry<ORq, ORs> = (String, DFn<RoutedRequest<ORq>, ORs>);
+struct RouteEntry<ORq, ORs> {
+    rdef: ResourceDef,
+    pattern: String,
+    methods: Vec<&'static Method>,
+    handler: DFn<RoutedRequest<ORq>, ORs>,
+}
+
+fn literal_prefix(pattern: &str) -> impl Iterator<Item = &str> {
+    segments(pattern).take_while(|segment| !segment.contains(['{', '*']))
+}
+
+fn segments(path: &str) -> impl Iterator<Item = &str> {
+    path.strip_prefix('/').unwrap_or(path).split('/')
+}
+
+#[derive(Default)]
+struct PrefixIndex {
+    routes: Vec<usize>,
+    children: HashMap<String, PrefixIndex>,
+}
+
+impl PrefixIndex {
+    fn build(patterns: &[String]) -> Self {
+        let mut root = PrefixIndex::default();
+
+        for (route, pattern) in patterns.iter().enumerate() {
+            let mut node = &mut root;
+            for segment in literal_prefix(pattern) {
+                node = node.children.entry(segment.to_owned()).or_default();
+            }
+            node.routes.push(route);
+        }
+
+        root.push_down(&[]);
+        root
+    }
+
+    fn push_down(&mut self, inherited: &[usize]) {
+        self.routes.extend_from_slice(inherited);
+        self.routes.sort_unstable();
+        let inherited = self.routes.clone();
+        for child in self.children.values_mut() {
+            child.push_down(&inherited);
+        }
+    }
+
+    fn candidates(&self, path: &str) -> &[usize] {
+        let mut node = self;
+        for segment in segments(path) {
+            match node.children.get(segment) {
+                Some(child) => node = child,
+                None => break,
+            }
+        }
+        &node.routes
+    }
+}
 
 pub mod first {
     use super::*;
@@ -69,7 +125,7 @@ pub mod first {
         {
             let routes = handler(routes::Routes::new());
 
-            let mut inner_router = InnerRouter::build();
+            let mut entries: Vec<RouteEntry<ORq, ORs>> = Vec::new();
             let mut methods_by_pattern: HashMap<String, Vec<&'static Method>> = HashMap::new();
             let mut catch_all_patterns: HashSet<String> = HashSet::new();
 
@@ -96,11 +152,24 @@ pub mod first {
                     }
                 }
 
-                inner_router.push(ResourceDef::new(path.clone()), (path, handler), methods);
+                entries.push(RouteEntry {
+                    rdef: ResourceDef::new(path.clone()),
+                    pattern: path,
+                    methods,
+                    handler,
+                });
             }
 
+            let index = PrefixIndex::build(
+                &entries
+                    .iter()
+                    .map(|entry| entry.pattern.clone())
+                    .collect::<Vec<_>>(),
+            );
+
             router::second::Router {
-                inner: inner_router.finish(),
+                entries,
+                index,
                 methods_by_pattern,
                 fallback_handler: self.fallback_handler,
             }
@@ -118,7 +187,8 @@ pub mod second {
         ORq: Send + 'static,
         ORs: Send + 'static,
     {
-        pub(super) inner: InnerRouter<RouteEntry<ORq, ORs>, Vec<&'static Method>>,
+        pub(super) entries: Vec<RouteEntry<ORq, ORs>>,
+        pub(super) index: PrefixIndex,
         pub(super) methods_by_pattern: HashMap<String, Vec<&'static Method>>,
         pub(super) fallback_handler: DFn<RoutedRequest<ORq>, ORs>,
     }
@@ -133,19 +203,63 @@ pub mod second {
             method: &Method,
             path: &mut Path<String>,
         ) -> (&DFn<RoutedRequest<ORq>, ORs>, Vec<&'static Method>) {
-            let matched = self.inner.recognize_fn(path, |_, methods| {
-                methods.is_empty() || methods.contains(&method)
-            });
+            let mut rejected_pattern: Option<&str> = None;
 
-            if let Some(((_, handler), _)) = matched {
-                return (handler, Vec::new());
+            for &route in self.index.candidates(path.unprocessed()) {
+                let entry = &self.entries[route];
+                let mut path_matched = false;
+
+                let matched = entry.rdef.capture_match_info_fn(path, |_| {
+                    path_matched = true;
+                    entry.methods.is_empty() || entry.methods.contains(&method)
+                });
+
+                if matched {
+                    return (&entry.handler, Vec::new());
+                }
+                if path_matched && rejected_pattern.is_none() {
+                    rejected_pattern = Some(&entry.pattern);
+                }
             }
 
-            let mut probe_path = Path::new(path.as_str().to_owned());
-            let allowed_methods = self
-                .inner
-                .recognize_fn(&mut probe_path, |_, _| true)
-                .and_then(|((pattern, _), _)| self.methods_by_pattern.get(pattern))
+            let allowed_methods = rejected_pattern
+                .and_then(|pattern| self.methods_by_pattern.get(pattern))
+                .cloned()
+                .unwrap_or_default();
+
+            (&self.fallback_handler, allowed_methods)
+        }
+    }
+
+    impl<ORq, ORs> Router<ORq, ORs>
+    where
+        ORq: Send + 'static,
+        ORs: Send + 'static,
+    {
+        #[cfg(test)]
+        pub(super) fn resolve_unindexed(
+            &self,
+            method: &Method,
+            path: &mut Path<String>,
+        ) -> (&DFn<RoutedRequest<ORq>, ORs>, Vec<&'static Method>) {
+            let mut rejected_pattern: Option<&str> = None;
+
+            for entry in &self.entries {
+                let mut path_matched = false;
+                let matched = entry.rdef.capture_match_info_fn(path, |_| {
+                    path_matched = true;
+                    entry.methods.is_empty() || entry.methods.contains(&method)
+                });
+                if matched {
+                    return (&entry.handler, Vec::new());
+                }
+                if path_matched && rejected_pattern.is_none() {
+                    rejected_pattern = Some(&entry.pattern);
+                }
+            }
+
+            let allowed_methods = rejected_pattern
+                .and_then(|pattern| self.methods_by_pattern.get(pattern))
                 .cloned()
                 .unwrap_or_default();
 
@@ -163,11 +277,7 @@ pub mod second {
 
             let method = http_request_ref.method().clone();
             let mut path = Path::new(requote_path(http_request_ref.uri().path()));
-            let query = http_request_ref
-                .uri()
-                .query()
-                .map(|v| form_urlencoded::parse(v.as_bytes()).into_owned().collect())
-                .unwrap_or_default();
+            let query = query::Query::new(http_request_ref.uri().query());
 
             let (handler, allowed_methods) = self.resolve(&method, &mut path);
 
@@ -211,7 +321,7 @@ mod tests {
         let (handler, allowed_methods) = router.resolve(method, &mut path);
         let response = handler(RoutedRequest {
             path: Path::new(String::new()),
-            query: HashMap::new(),
+            query: Default::default(),
             allowed_methods: Vec::new(),
             origin: (),
         })
@@ -377,5 +487,127 @@ mod tests {
 
         let (_, _, response) = resolve(&router, &Method::POST, "/api/x").await;
         assert_eq!(response, "catch-all");
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+
+    const PATTERNS: &[&str] = &[
+        "/api/notes/{id}",
+        "/api/notes",
+        "/api/{anything}",
+        "/api/notes/{id}/comments/{comment}",
+        "/{tenant}/dashboard",
+        "/files/{path}*",
+        "/post/{id:\\d+}",
+        "/post/{slug}",
+        "/file/{name}.{ext}",
+        "/",
+        "/deep/a/b/c/d/e/f/g",
+        "/api",
+    ];
+
+    const PATHS: &[&str] = &[
+        "/",
+        "/api",
+        "/api/",
+        "/api/notes",
+        "/api/notes/",
+        "/api/notes/1",
+        "/api/notes/1/comments/2",
+        "/api/notes/1/comments",
+        "/api/other",
+        "/acme/dashboard",
+        "/acme/dashboard/x",
+        "/files/a/b/c",
+        "/files/",
+        "/post/12",
+        "/post/hello",
+        "/file/report.pdf",
+        "/file/report",
+        "/deep/a/b/c/d/e/f/g",
+        "/deep/a/b/c/d/e/f",
+        "/nothing/here",
+        "",
+        "/api/notes/1/",
+        "/apix/notes",
+        "/dashboard",
+    ];
+
+    fn router() -> second::Router<(), &'static str> {
+        first::Router::with_fallback_handler(|_: RoutedRequest<()>| async { "fallback" })
+            .and_routes(|mut r| {
+                for pattern in PATTERNS {
+                    r = r.route(
+                        route::first::Route::with_method(&Method::GET)
+                            .and_path(*pattern)
+                            .and_handler(move |_: RoutedRequest<()>| async move { *pattern }),
+                    );
+                }
+                r
+            })
+    }
+
+    async fn run(
+        router: &second::Router<(), &'static str>,
+        indexed: bool,
+        method: &Method,
+        path: &str,
+    ) -> (String, Vec<&'static Method>, &'static str) {
+        let mut path = Path::new(requote_path(path));
+        let (handler, allowed) = if indexed {
+            router.resolve(method, &mut path)
+        } else {
+            router.resolve_unindexed(method, &mut path)
+        };
+        let response = handler(RoutedRequest {
+            path: Path::new(String::new()),
+            query: Default::default(),
+            allowed_methods: Vec::new(),
+            origin: (),
+        })
+        .await;
+        let captured = format!("{:?}", path.iter().collect::<Vec<_>>());
+        (captured, allowed, response)
+    }
+
+    #[tokio::test]
+    async fn index_resolves_exactly_like_a_full_scan() {
+        let router = router();
+
+        for method in [&Method::GET, &Method::POST] {
+            for path in PATHS {
+                let indexed = run(&router, true, method, path).await;
+                let scanned = run(&router, false, method, path).await;
+                assert_eq!(
+                    indexed, scanned,
+                    "index disagrees with a full scan for {method} {path:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_shallow_route_registered_earlier_beats_a_deeper_later_one() {
+        let router =
+            first::Router::with_fallback_handler(|_: RoutedRequest<()>| async { "fallback" })
+                .and_routes(|r| {
+                    r.route(
+                        route::first::Route::with_method(&Method::GET)
+                            .and_path("/{tenant}/dashboard")
+                            .and_handler(|_: RoutedRequest<()>| async { "dynamic" }),
+                    )
+                    .route(
+                        route::first::Route::with_method(&Method::GET)
+                            .and_path("/acme/dashboard")
+                            .and_handler(|_: RoutedRequest<()>| async { "literal" }),
+                    )
+                });
+
+        let (captured, _, response) = run(&router, true, &Method::GET, "/acme/dashboard").await;
+        assert_eq!(response, "dynamic");
+        assert_eq!(captured, r#"[("tenant", "acme")]"#);
     }
 }

@@ -4,7 +4,6 @@ use screw_core::routing::actix::Path;
 use screw_core::routing::middleware::{Chained, Middleware};
 use screw_core::routing::route;
 use screw_core::routing::router::{self, RoutedRequest};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 type Log = Arc<Mutex<Vec<&'static str>>>;
@@ -12,7 +11,7 @@ type Log = Arc<Mutex<Vec<&'static str>>>;
 fn routed_request() -> RoutedRequest<()> {
     RoutedRequest {
         path: Path::new(String::new()),
-        query: HashMap::new(),
+        query: Default::default(),
         allowed_methods: Vec::new(),
         origin: (),
     }
