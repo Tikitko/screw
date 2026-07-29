@@ -155,11 +155,7 @@ pub mod second {
             let query = http_request_ref
                 .uri()
                 .query()
-                .map(|v| {
-                    url::form_urlencoded::parse(v.as_bytes())
-                        .into_owned()
-                        .collect()
-                })
+                .map(|v| form_urlencoded::parse(v.as_bytes()).into_owned().collect())
                 .unwrap_or_default();
 
             let (handler, allowed_methods) = self.resolve(&method, &mut path);
