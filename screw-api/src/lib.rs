@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "ws")]
 pub mod channel;
 pub mod request;

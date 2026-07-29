@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod body;
 pub mod request;
 pub mod responder_factory;

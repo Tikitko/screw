@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod middleware;
 mod request;
 mod response;

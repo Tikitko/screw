@@ -2,7 +2,7 @@ use super::*;
 use actix::{Path, Quoter, ResourceDef, Router as InnerRouter};
 use hyper::Method;
 use screw_components::dyn_fn::DFn;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 pub struct RoutedRequest<ORq> {
@@ -60,14 +60,31 @@ pub mod first {
 
             let mut inner_router = InnerRouter::build();
             let mut methods_by_pattern: HashMap<String, Vec<&'static Method>> = HashMap::new();
+            let mut catch_all_patterns: HashSet<String> = HashSet::new();
 
             for (methods, path, handler) in routes.handlers() {
+                if catch_all_patterns.contains(&path) {
+                    panic!(
+                        "route {path:?} is unreachable: an earlier route on the same pattern \
+                         already accepts any method"
+                    );
+                }
+
                 let pattern_methods = methods_by_pattern.entry(path.clone()).or_default();
-                for method in &methods {
-                    if !pattern_methods.contains(method) {
+                if methods.is_empty() {
+                    catch_all_patterns.insert(path.clone());
+                } else {
+                    for method in &methods {
+                        if pattern_methods.contains(method) {
+                            panic!(
+                                "route {method} {path:?} is registered twice: \
+                                 only the first registration is reachable"
+                            );
+                        }
                         pattern_methods.push(method);
                     }
                 }
+
                 inner_router.push(ResourceDef::new(path.clone()), (path, handler), methods);
             }
 
@@ -162,7 +179,6 @@ pub mod second {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use screw_components::dyn_fn::DFuture;
 
     fn router_with(
         routes: Vec<(Vec<&'static Method>, &'static str)>,
@@ -180,88 +196,72 @@ mod tests {
             })
     }
 
-    fn resolve(
+    async fn resolve(
         router: &second::Router<(), &'static str>,
         method: &Method,
         path: &str,
     ) -> (Path<String>, Vec<&'static Method>, &'static str) {
         let mut path = Path::new(requote_path(path));
         let (handler, allowed_methods) = router.resolve(method, &mut path);
-        let response = block_on(handler(RoutedRequest {
+        let response = handler(RoutedRequest {
             path: Path::new(String::new()),
             query: HashMap::new(),
             allowed_methods: Vec::new(),
             origin: (),
-        }));
+        })
+        .await;
         (path, allowed_methods, response)
     }
 
-    fn block_on<T>(mut future: DFuture<T>) -> T {
-        use std::pin::Pin;
-        use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-        const VTABLE: RawWakerVTable = RawWakerVTable::new(
-            |_| RawWaker::new(std::ptr::null(), &VTABLE),
-            |_| {},
-            |_| {},
-            |_| {},
-        );
-        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
-        let mut context = Context::from_waker(&waker);
-        match Pin::new(&mut future).poll(&mut context) {
-            Poll::Ready(value) => value,
-            Poll::Pending => panic!("test handler is not immediately ready"),
-        }
-    }
-
-    #[test]
-    fn encoded_slash_does_not_split_path_segments() {
+    #[tokio::test]
+    async fn encoded_slash_does_not_split_path_segments() {
         let router = router_with(vec![(vec![&Method::GET], "/post/{id}")]);
 
-        let (path, _, response) = resolve(&router, &Method::GET, "/post/a%2Fb");
+        let (path, _, response) = resolve(&router, &Method::GET, "/post/a%2Fb").await;
 
         assert_eq!(response, "/post/{id}");
         assert_eq!(path.get("id"), Some("a%2Fb"));
     }
 
-    #[test]
-    fn ordinary_percent_escapes_are_decoded() {
+    #[tokio::test]
+    async fn ordinary_percent_escapes_are_decoded() {
         let router = router_with(vec![(vec![&Method::GET], "/author/slug/{slug}")]);
 
-        let (path, _, response) = resolve(&router, &Method::GET, "/author/slug/hello%20world");
+        let (path, _, response) =
+            resolve(&router, &Method::GET, "/author/slug/hello%20world").await;
 
         assert_eq!(response, "/author/slug/{slug}");
         assert_eq!(path.get("slug"), Some("hello world"));
     }
 
-    #[test]
-    fn malformed_percent_escape_does_not_empty_the_path() {
+    #[tokio::test]
+    async fn malformed_percent_escape_does_not_empty_the_path() {
         let router = router_with(vec![(vec![&Method::GET], "/post/{id}")]);
 
-        let (path, _, response) = resolve(&router, &Method::GET, "/post/%zz");
+        let (path, _, response) = resolve(&router, &Method::GET, "/post/%zz").await;
 
         assert_eq!(response, "/post/{id}");
         assert_eq!(path.get("id"), Some("%zz"));
     }
 
-    #[test]
-    fn non_utf8_percent_escape_does_not_empty_the_path() {
+    #[tokio::test]
+    async fn non_utf8_percent_escape_does_not_empty_the_path() {
         let router = router_with(vec![(vec![&Method::GET], "/post/{id}")]);
 
-        let (path, _, response) = resolve(&router, &Method::GET, "/post/%FF%FE");
+        let (path, _, response) = resolve(&router, &Method::GET, "/post/%FF%FE").await;
 
         assert_eq!(response, "/post/{id}");
         assert!(!path.as_str().is_empty());
     }
 
-    #[test]
-    fn method_mismatch_reports_allowed_methods() {
+    #[tokio::test]
+    async fn method_mismatch_reports_allowed_methods() {
         let router = router_with(vec![
             (vec![&Method::GET], "/post/{id}"),
             (vec![&Method::PATCH, &Method::DELETE], "/post/{id}"),
         ]);
 
-        let (_, allowed_methods, response) = resolve(&router, &Method::POST, "/post/1");
+        let (_, allowed_methods, response) = resolve(&router, &Method::POST, "/post/1").await;
 
         assert_eq!(response, "fallback");
         assert_eq!(
@@ -270,49 +270,106 @@ mod tests {
         );
     }
 
-    #[test]
-    fn unknown_path_reports_no_allowed_methods() {
+    #[tokio::test]
+    async fn unknown_path_reports_no_allowed_methods() {
         let router = router_with(vec![(vec![&Method::GET], "/post/{id}")]);
 
-        let (_, allowed_methods, response) = resolve(&router, &Method::GET, "/nothing/here");
+        let (_, allowed_methods, response) = resolve(&router, &Method::GET, "/nothing/here").await;
 
         assert_eq!(response, "fallback");
         assert!(allowed_methods.is_empty());
     }
 
-    #[test]
-    fn any_method_route_accepts_every_method() {
+    #[tokio::test]
+    async fn any_method_route_accepts_every_method() {
         let router = router_with(vec![(vec![], "/any")]);
 
         for method in [&Method::GET, &Method::POST, &Method::DELETE] {
-            let (_, allowed_methods, response) = resolve(&router, method, "/any");
+            let (_, allowed_methods, response) = resolve(&router, method, "/any").await;
             assert_eq!(response, "/any");
             assert!(allowed_methods.is_empty());
         }
     }
 
-    #[test]
-    fn earliest_registered_of_two_matching_patterns_wins() {
-        let labelled = |label: &'static str, path: &'static str| {
+    #[tokio::test]
+    async fn earliest_registered_of_two_overlapping_patterns_wins() {
+        let router =
             first::Router::with_fallback_handler(|_: RoutedRequest<()>| async { "fallback" })
-                .and_routes(move |r| {
+                .and_routes(|r| {
                     r.route(
                         route::first::Route::with_method(&Method::GET)
-                            .and_path(path)
-                            .and_handler(move |_: RoutedRequest<()>| async move { label }),
+                            .and_path("/api/{id}")
+                            .and_handler(|_: RoutedRequest<()>| async { "first" }),
                     )
                     .route(
                         route::first::Route::with_method(&Method::GET)
                             .and_path("/api/x")
                             .and_handler(|_: RoutedRequest<()>| async { "second" }),
                     )
-                })
-        };
+                });
 
-        let (_, _, response) = resolve(&labelled("first", "/api/x"), &Method::GET, "/api/x");
+        let (_, _, response) = resolve(&router, &Method::GET, "/api/x").await;
         assert_eq!(response, "first");
+    }
 
-        let (_, _, response) = resolve(&labelled("first", "/api/{id}"), &Method::GET, "/api/x");
-        assert_eq!(response, "first");
+    #[test]
+    #[should_panic(expected = "registered twice")]
+    fn same_pattern_and_method_twice_panics() {
+        router_with(vec![
+            (vec![&Method::GET], "/api/x"),
+            (vec![&Method::GET], "/api/x"),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "registered twice")]
+    fn partially_overlapping_methods_on_one_pattern_panic() {
+        router_with(vec![
+            (vec![&Method::GET], "/api/x"),
+            (vec![&Method::POST, &Method::GET], "/api/x"),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "already accepts any method")]
+    fn route_after_a_catch_all_on_the_same_pattern_panics() {
+        router_with(vec![(vec![], "/api/x"), (vec![&Method::GET], "/api/x")]);
+    }
+
+    #[test]
+    fn distinct_methods_on_one_pattern_are_allowed() {
+        router_with(vec![
+            (vec![&Method::GET], "/api/x"),
+            (vec![&Method::POST, &Method::DELETE], "/api/x"),
+        ]);
+    }
+
+    #[test]
+    fn a_catch_all_after_specific_methods_is_allowed() {
+        router_with(vec![(vec![&Method::GET], "/api/x"), (vec![], "/api/x")]);
+    }
+
+    #[tokio::test]
+    async fn a_catch_all_after_specific_methods_only_serves_the_rest() {
+        let router =
+            first::Router::with_fallback_handler(|_: RoutedRequest<()>| async { "fallback" })
+                .and_routes(|r| {
+                    r.route(
+                        route::first::Route::with_method(&Method::GET)
+                            .and_path("/api/x")
+                            .and_handler(|_: RoutedRequest<()>| async { "specific" }),
+                    )
+                    .route(
+                        route::first::Route::with_any_method()
+                            .and_path("/api/x")
+                            .and_handler(|_: RoutedRequest<()>| async { "catch-all" }),
+                    )
+                });
+
+        let (_, _, response) = resolve(&router, &Method::GET, "/api/x").await;
+        assert_eq!(response, "specific");
+
+        let (_, _, response) = resolve(&router, &Method::POST, "/api/x").await;
+        assert_eq!(response, "catch-all");
     }
 }
