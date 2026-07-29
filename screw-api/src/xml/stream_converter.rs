@@ -10,7 +10,6 @@ use tokio_tungstenite::WebSocketStream;
 #[derive(Clone, Copy, Debug)]
 pub struct XmlApiWebSocketConverter;
 
-#[async_trait]
 impl<Send, Receive> WebSocketStreamConverter<channel::ApiChannel<Send, Receive>>
     for XmlApiWebSocketConverter
 where

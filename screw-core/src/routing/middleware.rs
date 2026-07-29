@@ -17,11 +17,14 @@ use std::sync::Arc;
 /// Implemented for `()`, which passes the request straight through, and for any
 /// `Fn(Rq, DFnOnce<Rq, Rs>) -> impl Future<Output = Rs>`, which is the form to
 /// reach for when a middleware does not change the types.
-#[async_trait]
 pub trait Middleware<Rq, Rs> {
     type Request;
     type Response;
-    async fn respond(&self, request: Self::Request, next: DFnOnce<Rq, Rs>) -> Self::Response;
+    fn respond(
+        &self,
+        request: Self::Request,
+        next: DFnOnce<Rq, Rs>,
+    ) -> impl Future<Output = Self::Response> + Send;
 }
 
 /// Two middlewares run as one, `Outer` first.
@@ -47,7 +50,6 @@ impl<Outer, Inner> Chained<Outer, Inner> {
     }
 }
 
-#[async_trait]
 impl<Outer, Inner, Rq, Rs, MidRq, MidRs> Middleware<Rq, Rs> for Chained<Outer, Inner>
 where
     Outer: Middleware<MidRq, MidRs> + Send + Sync + 'static,
@@ -69,7 +71,6 @@ where
     }
 }
 
-#[async_trait]
 impl<Rq, Rs> Middleware<Rq, Rs> for ()
 where
     Rq: Send + 'static,
@@ -82,7 +83,6 @@ where
     }
 }
 
-#[async_trait]
 impl<Rq, Rs, HFn, HFut> Middleware<Rq, Rs> for HFn
 where
     Rq: Send + 'static,

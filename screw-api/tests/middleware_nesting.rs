@@ -86,7 +86,6 @@ where
 
 struct Auth;
 
-#[async_trait::async_trait]
 impl<Content, Ext, Success, Failure> Middleware<Authed<Content, Ext>, ApiResponse<Success, Failure>>
     for Auth
 where

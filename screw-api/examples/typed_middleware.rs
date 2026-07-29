@@ -130,7 +130,6 @@ trait AuthFailure {
 
 struct Auth;
 
-#[async_trait::async_trait]
 impl<Content, Extensions, Success, Failure>
     Middleware<Authed<Content, Extensions>, ApiResponse<Success, Failure>> for Auth
 where
@@ -169,7 +168,6 @@ where
 
 struct RequireAdmin;
 
-#[async_trait::async_trait]
 impl<Content, Extensions, Success, Failure>
     Middleware<AdminOnly<Content, Extensions>, ApiResponse<Success, Failure>> for RequireAdmin
 where

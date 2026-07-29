@@ -23,7 +23,6 @@ struct MidRs(String);
 
 struct Outer(Log);
 
-#[async_trait::async_trait]
 impl Middleware<Mid, MidRs> for Outer {
     type Request = RoutedRequest<()>;
     type Response = String;
@@ -40,7 +39,6 @@ struct LeafRs(String);
 
 struct Inner(Log);
 
-#[async_trait::async_trait]
 impl Middleware<Leaf, LeafRs> for Inner {
     type Request = Mid;
     type Response = MidRs;
@@ -57,7 +55,6 @@ struct TwigRs(String);
 
 struct Deepest;
 
-#[async_trait::async_trait]
 impl Middleware<Twig, TwigRs> for Deepest {
     type Request = Leaf;
     type Response = LeafRs;

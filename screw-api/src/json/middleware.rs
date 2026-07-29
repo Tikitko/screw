@@ -31,7 +31,6 @@ impl Default for JsonApiMiddlewareConverter {
     }
 }
 
-#[async_trait]
 impl<RqContent, Extensions, RsContentSuccess, RsContentFailure>
     Middleware<
         request::ApiRequest<RqContent, Extensions>,

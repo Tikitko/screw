@@ -12,7 +12,6 @@ pub struct JsonApiStreamConverter {
     pub pretty_printed: bool,
 }
 
-#[async_trait]
 impl<Send, Receive> WebSocketStreamConverter<channel::ApiChannel<Send, Receive>>
     for JsonApiStreamConverter
 where

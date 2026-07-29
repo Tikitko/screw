@@ -41,10 +41,6 @@ fn check_content_type(
     }
 }
 
-#[cfg(any(feature = "json", feature = "xml"))]
-#[macro_use]
-extern crate async_trait;
-
 #[cfg(test)]
 #[cfg(any(feature = "json", feature = "xml"))]
 mod content_type_tests {

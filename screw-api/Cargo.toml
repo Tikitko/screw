@@ -13,7 +13,6 @@ tokio-tungstenite = { version = "0.28.0", optional = true }
 serde = { version = "1.0.160", features = ["derive"] }
 serde_json = { version = "1.0.96", optional = true }
 quick-xml = { version = "0.39.0", features = ["serialize"], optional = true }
-async-trait = { version = "0.1.68", optional = true }
 futures = { version = "0.3.28", optional = true }
 derive-error = { version = "0.0.5", optional = true }
 
@@ -24,8 +23,8 @@ hyper-util = { version = "0.1.19", features = ["tokio"] }
 [features]
 default = []
 ws = ["screw-ws", "tokio-tungstenite", "futures", "hyper-util"]
-json = ["derive-error", "async-trait", "serde_json", "http-body-util"]
-xml = ["derive-error", "async-trait", "quick-xml", "http-body-util"]
+json = ["derive-error", "serde_json", "http-body-util"]
+xml = ["derive-error", "quick-xml", "http-body-util"]
 
 [[test]]
 name = "middleware_nesting"

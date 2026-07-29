@@ -29,7 +29,6 @@ impl Default for XmlApiMiddlewareConverter {
     }
 }
 
-#[async_trait]
 impl<RqContent, Extensions, RsContentSuccess, RsContentFailure>
     Middleware<
         request::ApiRequest<RqContent, Extensions>,

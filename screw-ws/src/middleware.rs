@@ -110,7 +110,6 @@ where
     }
 }
 
-#[async_trait]
 impl<StreamConverter, Content, Stream, Extensions>
     Middleware<WebSocketRequest<Content, Stream, Extensions>, WebSocketResponse>
     for WebSocketMiddlewareConverter<StreamConverter>
