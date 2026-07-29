@@ -94,6 +94,19 @@ async fn echo(
     }
 }
 
+/// The same endpoint written without naming either wrapper: the request
+/// arrives as the content alone, through `From<ApiRequest<_, _>> for (Content,)`,
+/// and the answer goes back as a `Result`, through
+/// `From<Result<_, _>> for ApiResponse<_, _>`.
+async fn echo_unpacked((content,): (EchoContent,)) -> Result<EchoSuccess, EchoFailure> {
+    match content.data {
+        Ok(data) => Ok(EchoSuccess(Echoed {
+            message: data.message,
+        })),
+        Err(error) => Err(EchoFailure(error.to_string())),
+    }
+}
+
 async fn fallback(_: RoutedRequest<ScrewRequest<Extensions>>) -> Response {
     Response {
         http: hyper::Response::builder()
@@ -115,6 +128,11 @@ async fn start_server() -> SocketAddr {
                 Route::with_method(&Method::POST)
                     .and_path("/echo")
                     .and_handler(echo),
+            )
+            .route(
+                Route::with_method(&Method::POST)
+                    .and_path("/echo-unpacked")
+                    .and_handler(echo_unpacked),
             )
         })
     });
@@ -147,6 +165,15 @@ async fn post(
     content_type: Option<&str>,
     body: &str,
 ) -> (StatusCode, hyper::HeaderMap, serde_json::Value) {
+    post_to(addr, "/api/echo", content_type, body).await
+}
+
+async fn post_to(
+    addr: SocketAddr,
+    path: &str,
+    content_type: Option<&str>,
+    body: &str,
+) -> (StatusCode, hyper::HeaderMap, serde_json::Value) {
     let stream = TcpStream::connect(addr).await.unwrap();
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
@@ -155,7 +182,7 @@ async fn post(
 
     let mut builder = Request::builder()
         .method(Method::POST)
-        .uri("/api/echo")
+        .uri(path)
         .header(hyper::header::HOST, "localhost");
     if let Some(content_type) = content_type {
         builder = builder.header(hyper::header::CONTENT_TYPE, content_type);
@@ -187,6 +214,37 @@ async fn a_valid_request_round_trips_through_the_json_layer() {
     );
     assert_eq!(json["success"]["identifier"], "ECHOED");
     assert_eq!(json["success"]["data"]["message"], "hi there");
+}
+
+#[tokio::test]
+async fn a_handler_may_take_the_content_alone_and_return_a_result() {
+    let addr = start_server().await;
+
+    let (status, headers, json) = post_to(
+        addr,
+        "/api/echo-unpacked",
+        Some("application/json"),
+        r#"{"message":"hi there"}"#,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get(hyper::header::CONTENT_TYPE).unwrap(),
+        "application/json"
+    );
+    assert_eq!(json["success"]["identifier"], "ECHOED");
+    assert_eq!(json["success"]["data"]["message"], "hi there");
+}
+
+#[tokio::test]
+async fn an_err_from_such_a_handler_becomes_a_failure_response() {
+    let addr = start_server().await;
+
+    let (status, _, json) = post_to(addr, "/api/echo-unpacked", None, r#"{"message":"hi"}"#).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["failure"]["identifier"], "BAD_BODY");
 }
 
 #[tokio::test]

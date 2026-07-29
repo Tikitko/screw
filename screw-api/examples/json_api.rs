@@ -168,21 +168,22 @@ impl ApiResponseContentFailure for NoteFailure {
 
 // ---------------------------------------------------------------- handlers
 
+/// Answers with a `Result` instead of an `ApiResponse`. The route converts it on
+/// the way out, so an `Err` is an ordinary failure response and `?` works on the
+/// endpoint's own failure type. `create_note` below spells the response out in
+/// full instead.
 async fn read_note(
     request: ApiRequest<ReadNoteContent, Extensions>,
-) -> ApiResponse<NoteSuccess, NoteFailure> {
+) -> Result<NoteSuccess, NoteFailure> {
     let content = request.content;
 
     let Some(id) = content.id else {
-        return ApiResponse::failure(NoteFailure::BadId);
+        return Err(NoteFailure::BadId);
     };
 
     let note = content.extensions.notes.lock().unwrap().get(&id).cloned();
 
-    // `ApiResponse` also converts from a `Result`, which is often tidier.
-    note.map(NoteSuccess::Found)
-        .ok_or(NoteFailure::NotFound)
-        .into()
+    note.map(NoteSuccess::Found).ok_or(NoteFailure::NotFound)
 }
 
 async fn create_note(

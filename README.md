@@ -61,7 +61,7 @@ Four runnable servers live in the workspace. Each listens on `127.0.0.1:8080` an
 | --- | --- | --- |
 | [`hello`](screw-core/examples/hello.rs) | `cargo run -p screw-core --example hello` | The router on its own — path params, query, `Extensions`, a function middleware, 404 vs 405. |
 | [`json_api`](screw-api/examples/json_api.rs) | `cargo run -p screw-api --example json_api --features json` | Typed JSON requests and responses, per-variant status codes, malformed bodies, `Infallible` failures, body-size limits. |
-| [`typed_middleware`](screw-api/examples/typed_middleware.rs) | `cargo run -p screw-api --example typed_middleware --features json` | Middlewares that change the request type: `ApiRequest` → `Authed` → `AdminOnly`, with short-circuited 401/403. |
+| [`typed_middleware`](screw-api/examples/typed_middleware.rs) | `cargo run -p screw-api --example typed_middleware --features json` | Middlewares that change the request type: `ApiRequest` → `Authed` → `AdminOnly`, with short-circuited 401/403, and both handler signature styles. |
 | [`websocket_chat`](screw-api/examples/websocket_chat.rs) | `cargo run -p screw-api --example websocket_chat --features json,ws` | The WebSocket upgrade as a middleware and a typed `ApiChannel`; open the served page in two tabs to chat. |
 
 ## Quick start
@@ -284,7 +284,7 @@ ResponderFactory::with_router(router)
 
 - Path patterns come from [`actix-router`](https://docs.rs/actix-router): `/post/{id}`, `/files/{path}*`, and so on. Matched segments are read via `path.get("id")`.
 - `Route::with_method`, `with_methods`, and `with_any_method` control method matching; `with_any_method` matches every method.
-- The query string arrives as `RoutedRequest::query`, a `Query`. It is parsed on the first `get` or `iter` and the result is cached, so a handler that ignores the query does not pay for parsing it. Repeated keys keep the last value.
+- The query string arrives as `RoutedRequest::query`, a `Query`. It is parsed on the first call that needs the pairs -- `get`, `iter`, `is_empty` or `as_map` -- and the result is cached, so a handler that ignores the query does not pay for parsing it. Repeated keys keep the last value.
 - When two registered patterns match the same request, **the one registered first wins**.
 - Patterns are indexed by the literal segments they start with, so the router only matches a request against the patterns that could possibly match it. Matching cost does not grow with the size of the route table.
 - When a path matches but the method does not, the fallback handler runs with `allowed_methods` filled in from every route sharing that pattern — enough to answer `405` with a correct `Allow` header. For an unknown path, `allowed_methods` is empty.
@@ -375,7 +375,7 @@ On the way out, `ApiResponse<Success, Failure>` is an enum of two content traits
 - `ApiResponseContentFailure` — `identifier` and `reason`;
 - both extend `ApiResponseContentBase`, which supplies the HTTP status code.
 
-`Infallible` implements all three, so `ApiResponse<Success, Infallible>` is the type for an endpoint that cannot fail. `ApiResponse` also has `From<Result<Success, Failure>>`, so a handler can end in `result.into()`.
+`Infallible` implements all three, so `ApiResponse<Success, Infallible>` is the type for an endpoint that cannot fail.
 
 Serialization failures never leak: if the response cannot be written, the middleware answers `500` with an empty body.
 

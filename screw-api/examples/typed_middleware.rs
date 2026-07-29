@@ -6,6 +6,10 @@
 //! already happened — an `AdminOnly` handler cannot be routed without both
 //! middlewares above it.
 //!
+//! The two handlers are written in the two available styles: `stats` names the
+//! wrapper it is handed, while `profile` takes the pieces and answers with a
+//! `Result`, letting `route` convert on both sides.
+//!
 //! ```sh
 //! cargo run -p screw-api --example typed_middleware --features json
 //!
@@ -111,6 +115,18 @@ struct Authed<Content, Extensions> {
     content: Content,
     user: User,
     _p_e: PhantomData<Extensions>,
+}
+
+/// Lets a handler take the parts instead of the wrapper. [`Routes::route`]
+/// applies this between the middleware and the handler, which is why `profile`
+/// below can destructure the pair right in its signature — no middleware of its
+/// own, and `Authed` never appears in the handler's types.
+///
+/// [`Routes::route`]: screw_core::routing::routes::Routes::route
+impl<Content, Extensions> From<Authed<Content, Extensions>> for (User, Content) {
+    fn from(value: Authed<Content, Extensions>) -> Self {
+        (value.user, value.content)
+    }
 }
 
 /// What an admin-only handler receives.
@@ -294,16 +310,20 @@ impl AuthFailure for AccessFailure {
 
 // ---------------------------------------------------------------- handlers
 
-async fn profile(
-    request: Authed<PlainContent, Extensions>,
-) -> ApiResponse<ProfileSuccess, AccessFailure> {
+/// Neither `Authed` nor `ApiResponse` is named here. The request arrives as a
+/// pair through the `From` impl above, and the `Result` becomes an
+/// `ApiResponse` through the one that ships with [`ApiResponse`] — an `Err` is
+/// a failure response, not a panic, so `?` works on the endpoint's own failure
+/// type.
+async fn profile((user, _content): (User, PlainContent)) -> Result<ProfileSuccess, AccessFailure> {
     // Reaching this body at all means `Auth` let the request through.
-    ApiResponse::success(ProfileSuccess::Profile(Profile {
-        name: request.user.name,
-        is_admin: request.user.is_admin,
+    Ok(ProfileSuccess::Profile(Profile {
+        name: user.name,
+        is_admin: user.is_admin,
     }))
 }
 
+/// The same endpoint spelled the other way, naming what the middleware hands it.
 async fn stats(
     request: AdminOnly<PlainContent, Extensions>,
 ) -> ApiResponse<StatsSuccess, AccessFailure> {
