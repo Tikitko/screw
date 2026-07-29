@@ -14,10 +14,12 @@ pub struct RoutedRequest<ORq> {
     pub path: Path<String>,
     /// The query string. Parsed on first access, not on every request.
     pub query: query::Query,
-    /// The methods the matched path does accept, filled in only when no route
-    /// matched. Non-empty means the path exists but the method is wrong -- a
-    /// 405 with this as the `Allow` header -- and empty means no such path,
-    /// which is a 404. Only the fallback handler ever sees this non-empty.
+    /// Every method that some route would accept on this path, gathered across
+    /// all the patterns matching it, deduplicated and in registration order.
+    /// Filled in only when no route matched: non-empty means the path exists
+    /// but the method is wrong -- a 405 with this as the `Allow` header -- and
+    /// empty means no such path, which is a 404. Only the fallback handler ever
+    /// sees this non-empty.
     pub allowed_methods: Vec<&'static Method>,
     /// The request as it arrived, untouched.
     pub origin: ORq,
@@ -33,9 +35,38 @@ fn requote_path(path: &str) -> String {
 
 struct RouteEntry<ORq, ORs> {
     rdef: ResourceDef,
-    pattern: String,
     methods: Vec<&'static Method>,
     handler: DFn<RoutedRequest<ORq>, ORs>,
+}
+
+impl<ORq, ORs> RouteEntry<ORq, ORs> {
+    fn resolve(
+        &self,
+        method: &Method,
+        path: &mut Path<String>,
+        allowed_methods: &mut Vec<&'static Method>,
+    ) -> Option<&DFn<RoutedRequest<ORq>, ORs>> {
+        let mut path_matched = false;
+
+        let matched = self.rdef.capture_match_info_fn(path, |_| {
+            path_matched = true;
+            self.methods.is_empty() || self.methods.contains(&method)
+        });
+
+        if matched {
+            return Some(&self.handler);
+        }
+
+        if path_matched {
+            for method in &self.methods {
+                if !allowed_methods.contains(method) {
+                    allowed_methods.push(method);
+                }
+            }
+        }
+
+        None
+    }
 }
 
 fn literal_prefix(pattern: &str) -> impl Iterator<Item = &str> {
@@ -126,6 +157,7 @@ pub mod first {
             let routes = handler(routes::Routes::new());
 
             let mut entries: Vec<RouteEntry<ORq, ORs>> = Vec::new();
+            let mut patterns: Vec<String> = Vec::new();
             let mut methods_by_pattern: HashMap<String, Vec<&'static Method>> = HashMap::new();
             let mut catch_all_patterns: HashSet<String> = HashSet::new();
 
@@ -154,23 +186,15 @@ pub mod first {
 
                 entries.push(RouteEntry {
                     rdef: ResourceDef::new(path.clone()),
-                    pattern: path,
                     methods,
                     handler,
                 });
+                patterns.push(path);
             }
-
-            let index = PrefixIndex::build(
-                &entries
-                    .iter()
-                    .map(|entry| entry.pattern.clone())
-                    .collect::<Vec<_>>(),
-            );
 
             router::second::Router {
                 entries,
-                index,
-                methods_by_pattern,
+                index: PrefixIndex::build(&patterns),
                 fallback_handler: self.fallback_handler,
             }
         }
@@ -189,7 +213,6 @@ pub mod second {
     {
         pub(super) entries: Vec<RouteEntry<ORq, ORs>>,
         pub(super) index: PrefixIndex,
-        pub(super) methods_by_pattern: HashMap<String, Vec<&'static Method>>,
         pub(super) fallback_handler: DFn<RoutedRequest<ORq>, ORs>,
     }
 
@@ -203,65 +226,32 @@ pub mod second {
             method: &Method,
             path: &mut Path<String>,
         ) -> (&DFn<RoutedRequest<ORq>, ORs>, Vec<&'static Method>) {
-            let mut rejected_pattern: Option<&str> = None;
+            let mut allowed_methods = Vec::new();
 
             for &route in self.index.candidates(path.unprocessed()) {
-                let entry = &self.entries[route];
-                let mut path_matched = false;
-
-                let matched = entry.rdef.capture_match_info_fn(path, |_| {
-                    path_matched = true;
-                    entry.methods.is_empty() || entry.methods.contains(&method)
-                });
-
-                if matched {
-                    return (&entry.handler, Vec::new());
-                }
-                if path_matched && rejected_pattern.is_none() {
-                    rejected_pattern = Some(&entry.pattern);
+                if let Some(handler) =
+                    self.entries[route].resolve(method, path, &mut allowed_methods)
+                {
+                    return (handler, Vec::new());
                 }
             }
 
-            let allowed_methods = rejected_pattern
-                .and_then(|pattern| self.methods_by_pattern.get(pattern))
-                .cloned()
-                .unwrap_or_default();
-
             (&self.fallback_handler, allowed_methods)
         }
-    }
 
-    impl<ORq, ORs> Router<ORq, ORs>
-    where
-        ORq: Send + 'static,
-        ORs: Send + 'static,
-    {
         #[cfg(test)]
         pub(super) fn resolve_unindexed(
             &self,
             method: &Method,
             path: &mut Path<String>,
         ) -> (&DFn<RoutedRequest<ORq>, ORs>, Vec<&'static Method>) {
-            let mut rejected_pattern: Option<&str> = None;
+            let mut allowed_methods = Vec::new();
 
             for entry in &self.entries {
-                let mut path_matched = false;
-                let matched = entry.rdef.capture_match_info_fn(path, |_| {
-                    path_matched = true;
-                    entry.methods.is_empty() || entry.methods.contains(&method)
-                });
-                if matched {
-                    return (&entry.handler, Vec::new());
-                }
-                if path_matched && rejected_pattern.is_none() {
-                    rejected_pattern = Some(&entry.pattern);
+                if let Some(handler) = entry.resolve(method, path, &mut allowed_methods) {
+                    return (handler, Vec::new());
                 }
             }
-
-            let allowed_methods = rejected_pattern
-                .and_then(|pattern| self.methods_by_pattern.get(pattern))
-                .cloned()
-                .unwrap_or_default();
 
             (&self.fallback_handler, allowed_methods)
         }
@@ -384,6 +374,35 @@ mod tests {
             allowed_methods,
             vec![&Method::GET, &Method::PATCH, &Method::DELETE]
         );
+    }
+
+    #[tokio::test]
+    async fn allowed_methods_span_every_pattern_that_matches() {
+        let router = router_with(vec![
+            (vec![&Method::PUT], "/{tail}*"),
+            (vec![&Method::POST], "/{id}"),
+        ]);
+
+        let (_, _, response) = resolve(&router, &Method::POST, "/thing").await;
+        assert_eq!(response, "/{id}");
+
+        let (_, allowed_methods, response) = resolve(&router, &Method::DELETE, "/thing").await;
+
+        assert_eq!(response, "fallback");
+        assert_eq!(allowed_methods, vec![&Method::PUT, &Method::POST]);
+    }
+
+    #[tokio::test]
+    async fn a_method_two_matching_patterns_share_is_reported_once() {
+        let router = router_with(vec![
+            (vec![&Method::GET], "/{id}"),
+            (vec![&Method::GET, &Method::POST], "/thing"),
+        ]);
+
+        let (_, allowed_methods, response) = resolve(&router, &Method::DELETE, "/thing").await;
+
+        assert_eq!(response, "fallback");
+        assert_eq!(allowed_methods, vec![&Method::GET, &Method::POST]);
     }
 
     #[tokio::test]
