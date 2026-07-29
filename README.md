@@ -286,9 +286,9 @@ ResponderFactory::with_router(router)
 - `Route::with_method`, `with_methods`, and `with_any_method` control method matching; `with_any_method` matches every method.
 - The query string arrives as `RoutedRequest::query`, a `Query`. It is parsed on the first call that needs the pairs -- `get`, `iter`, `is_empty` or `as_map` -- and the result is cached, so a handler that ignores the query does not pay for parsing it. Repeated keys keep the last value.
 - When two registered patterns match the same request, **the one registered first wins**.
-- Patterns are indexed by the literal segments they start with, so the router only matches a request against the patterns that could possibly match it. Matching cost does not grow with the size of the route table.
+- Patterns are indexed by the literal segments they start with, so a request is only matched against the patterns that could possibly match it. A table of patterns starting with distinct literals therefore costs the same to search however large it grows. The index is only as good as those literals: patterns that start with a dynamic segment — `/{tenant}/dashboard` — all share one bucket and are still scanned in order, so a table made mostly of those is back to a linear scan.
 - When a path matches but the method does not, the fallback handler runs with `allowed_methods` filled in from every route whose pattern matches that path — the complete set for an `Allow` header, deduplicated and in registration order. Every matching pattern gets a say, since a route further down the table may be the only one serving the method the client should have used. For an unknown path, `allowed_methods` is empty.
-- Percent-escapes in the path are decoded, except `%2F`, `%2B` and `%25`, which stay encoded so an escaped slash cannot forge an extra path segment. A malformed or non-UTF-8 escape leaves the path untouched rather than emptying it.
+- Percent-escapes in the path are decoded, except `%2F`, `%2B` and `%25`, which stay encoded so an escaped slash cannot forge an extra path segment. A malformed escape such as `%zz` is passed through as written; one that decodes to invalid UTF-8 becomes `U+FFFD`, so `/post/%FF` and `/post/%FE` reach a handler as the same path. Neither empties the path.
 
 ### Scopes and middleware
 
