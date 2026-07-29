@@ -10,13 +10,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  lint:
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
+    - uses: Swatinem/rust-cache@v2
+    - name: Check formatting
+      run: cargo fmt --all --check
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: Swatinem/rust-cache@v2
     - name: Build
-      run: cargo build --verbose --all-features
+      run: cargo build --workspace --all-targets --all-features --verbose
     - name: Run tests
-      run: cargo test --verbose --all-features
+      run: cargo test --workspace --all-features --verbose
+
+  # Every feature is optional and none is on by default, so a workflow that only
+  # ever builds --all-features never compiles most of the combinations a user can
+  # actually select.
+  features:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - ""
+          - "json"
+          - "xml"
+          - "ws"
+          - "json,ws"
+          - "xml,ws"
+          - "json,xml"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: Swatinem/rust-cache@v2
+    - name: Build screw-api with features "${{ matrix.features }}"
+      run: cargo build -p screw-api --no-default-features --features "${{ matrix.features }}"

@@ -1,8 +1,8 @@
 use super::*;
 use futures_util::{FutureExt, TryFutureExt};
 use hyper::body::Incoming;
-use hyper::header::HeaderValue;
-use hyper::{upgrade, Method, StatusCode, Version};
+use hyper::header::{self, HeaderValue};
+use hyper::{Method, StatusCode, Version, upgrade};
 use hyper_util::rt::TokioIo;
 use screw_components::dyn_fn::DFnOnce;
 use screw_core::request::Request;
@@ -11,10 +11,10 @@ use screw_core::routing::middleware::Middleware;
 use screw_core::routing::router::RoutedRequest;
 use std::sync::Arc;
 use tokio::task;
+use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::error::ProtocolError;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
-use tokio_tungstenite::WebSocketStream;
 
 fn is_get_method(request: &hyper::Request<Incoming>) -> bool {
     request.method() == Method::GET
@@ -28,7 +28,7 @@ fn is_connection_header_upgrade(request: &hyper::Request<Incoming>) -> bool {
         .get("Connection")
         .and_then(|h| h.to_str().ok())
         .map(|h| {
-            h.split(|c| c == ' ' || c == ',')
+            h.split([' ', ','])
                 .any(|p| p.eq_ignore_ascii_case("Upgrade"))
         })
         .unwrap_or(false)
@@ -110,7 +110,6 @@ where
     }
 }
 
-#[async_trait]
 impl<StreamConverter, Content, Stream, Extensions>
     Middleware<WebSocketRequest<Content, Stream, Extensions>, WebSocketResponse>
     for WebSocketMiddlewareConverter<StreamConverter>
@@ -141,10 +140,9 @@ where
                 let request_upgrade = WebSocketUpgrade {
                     convert_stream_fn: Box::new(move |generic_stream| {
                         let stream_converter = stream_converter.clone();
-                        Box::pin(async move {
-                            let stream = stream_converter.convert_stream(generic_stream).await;
-                            stream
-                        })
+                        Box::pin(
+                            async move { stream_converter.convert_stream(generic_stream).await },
+                        )
                     }),
                 };
 
@@ -180,9 +178,11 @@ where
                     .unwrap()
             }
             Err(protocol_error) => match protocol_error {
-                ProtocolError::WrongHttpMethod => {
-                    panic!("incorrect method for WebSocket, should be GET")
-                }
+                ProtocolError::WrongHttpMethod => hyper::Response::builder()
+                    .status(StatusCode::METHOD_NOT_ALLOWED)
+                    .header(header::ALLOW, "GET")
+                    .body(screw_core::body::empty())
+                    .unwrap(),
                 _ => hyper::Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body(screw_core::body::empty())

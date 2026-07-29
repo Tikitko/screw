@@ -1,5 +1,5 @@
 use super::super::*;
-use futures::{future, StreamExt};
+use futures::{StreamExt, future};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use screw_ws::WebSocketStreamConverter;
@@ -10,7 +10,6 @@ use tokio_tungstenite::WebSocketStream;
 #[derive(Clone, Copy, Debug)]
 pub struct XmlApiWebSocketConverter;
 
-#[async_trait]
 impl<Send, Receive> WebSocketStreamConverter<channel::ApiChannel<Send, Receive>>
     for XmlApiWebSocketConverter
 where

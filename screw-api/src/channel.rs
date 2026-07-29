@@ -1,25 +1,11 @@
 use futures::stream::SplitStream;
 use futures::{SinkExt, StreamExt};
-use hyper::http::request::Parts;
-use hyper::http::Extensions;
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use screw_components::dyn_fn::DFn;
 use screw_components::dyn_result::DError;
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio_tungstenite::tungstenite::Error;
-
-pub struct ApiChannelOriginContent {
-    pub http_parts: Parts,
-    pub remote_addr: SocketAddr,
-    pub extensions: Arc<Extensions>,
-}
-
-pub trait ApiChannelContent {
-    fn create(origin_content: ApiChannelOriginContent) -> Self;
-}
 
 pub struct ApiChannel<Send, Receive>
 where
@@ -50,8 +36,8 @@ pub mod first {
     use screw_components::dyn_result::DResult;
     use serde::Serialize;
     use std::future::Future;
-    use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::WebSocketStream;
+    use tokio_tungstenite::tungstenite::Message;
 
     pub struct ApiChannelSender {
         sink: SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>,
@@ -109,8 +95,8 @@ pub mod second {
     use futures::stream::SplitSink;
     use screw_components::dyn_result::DResult;
     use serde::Serialize;
-    use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::WebSocketStream;
+    use tokio_tungstenite::tungstenite::Message;
 
     pub struct ApiChannelSender<Send>
     where

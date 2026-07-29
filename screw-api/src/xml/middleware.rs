@@ -1,7 +1,7 @@
 use super::super::*;
 use hyper::body::Incoming;
 use hyper::http::request::Parts;
-use hyper::{header, StatusCode};
+use hyper::{StatusCode, header};
 use response::ApiResponseContentBase;
 use screw_components::dyn_fn::DFnOnce;
 use screw_components::dyn_result::DResult;
@@ -13,9 +13,22 @@ use screw_core::routing::router::RoutedRequest;
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug)]
-pub struct XmlApiMiddlewareConverter;
+pub struct XmlApiMiddlewareConverter {
+    pub max_body_size: usize,
+}
 
-#[async_trait]
+impl XmlApiMiddlewareConverter {
+    pub const DEFAULT_MAX_BODY_SIZE: usize = 2 * 1024 * 1024;
+}
+
+impl Default for XmlApiMiddlewareConverter {
+    fn default() -> Self {
+        Self {
+            max_body_size: Self::DEFAULT_MAX_BODY_SIZE,
+        }
+    }
+}
+
 impl<RqContent, Extensions, RsContentSuccess, RsContentFailure>
     Middleware<
         request::ApiRequest<RqContent, Extensions>,
@@ -38,28 +51,23 @@ where
             response::ApiResponse<RsContentSuccess, RsContentFailure>,
         >,
     ) -> Response {
-        async fn convert<Data>(parts: &Parts, body: Incoming) -> DResult<Data>
+        async fn convert<Data>(parts: &Parts, body: Incoming, max_body_size: usize) -> DResult<Data>
         where
             for<'de> Data: Deserialize<'de>,
         {
-            use http_body_util::BodyExt;
-            let content_type = match parts.headers.get(header::CONTENT_TYPE) {
-                Some(header_value) => Some(header_value.to_str()?),
-                None => None,
-            };
-            match content_type {
-                Some("application/xml") => Ok(()),
-                Some("") | None => Err(ApiRequestContentTypeError::Missed),
-                Some(_) => Err(ApiRequestContentTypeError::Incorrect),
-            }?;
-            let bytes = body.collect().await?.to_bytes();
+            use http_body_util::{BodyExt, Limited};
+            check_content_type(&parts.headers, "application/xml")?;
+            let bytes = Limited::new(body, max_body_size)
+                .collect()
+                .await?
+                .to_bytes();
             let xml_string = String::from_utf8(bytes.to_vec())?;
             let data = quick_xml::de::from_str(xml_string.as_str())?;
             Ok(data)
         }
 
         let (http_parts, http_body) = routed_request.origin.http.into_parts();
-        let data_result = convert(&http_parts, http_body).await;
+        let data_result = convert(&http_parts, http_body, self.max_body_size).await;
 
         let request_content = RqContent::create(request::ApiRequestOriginContent {
             path: routed_request.path,

@@ -1,5 +1,5 @@
 use super::super::*;
-use futures::{future, StreamExt};
+use futures::{StreamExt, future};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use screw_ws::WebSocketStreamConverter;
@@ -12,7 +12,6 @@ pub struct JsonApiStreamConverter {
     pub pretty_printed: bool,
 }
 
-#[async_trait]
 impl<Send, Receive> WebSocketStreamConverter<channel::ApiChannel<Send, Receive>>
     for JsonApiStreamConverter
 where
