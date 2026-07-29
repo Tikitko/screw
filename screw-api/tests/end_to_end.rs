@@ -48,8 +48,8 @@ impl ApiRequestContent<Extensions> for EchoContent {
 struct EchoSuccess(Echoed);
 
 impl ApiResponseContentBase for EchoSuccess {
-    fn status_code(&self) -> &'static StatusCode {
-        &StatusCode::OK
+    fn status_code(&self) -> StatusCode {
+        StatusCode::OK
     }
 }
 
@@ -69,8 +69,8 @@ impl ApiResponseContentSuccess for EchoSuccess {
 struct EchoFailure(String);
 
 impl ApiResponseContentBase for EchoFailure {
-    fn status_code(&self) -> &'static StatusCode {
-        &StatusCode::BAD_REQUEST
+    fn status_code(&self) -> StatusCode {
+        StatusCode::BAD_REQUEST
     }
 }
 

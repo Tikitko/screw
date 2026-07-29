@@ -4,11 +4,11 @@ use serde::{Serialize, Serializer};
 use std::convert::Infallible;
 
 pub trait ApiResponseContentBase {
-    fn status_code(&self) -> &'static StatusCode;
+    fn status_code(&self) -> StatusCode;
 }
 
 impl ApiResponseContentBase for Infallible {
-    fn status_code(&self) -> &'static StatusCode {
+    fn status_code(&self) -> StatusCode {
         unreachable!()
     }
 }
@@ -61,7 +61,7 @@ where
     Success: ApiResponseContentSuccess,
     Failure: ApiResponseContentFailure,
 {
-    fn status_code(&self) -> &'static StatusCode {
+    fn status_code(&self) -> StatusCode {
         match self {
             ApiResponseContent::Success(success) => success.status_code(),
             ApiResponseContent::Failure(failure) => failure.status_code(),
@@ -145,6 +145,39 @@ where
     fn from(value: Result<Success, Failure>) -> Self {
         Self {
             content: ApiResponseContent::from(value),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Upstream {
+        status_code: StatusCode,
+    }
+
+    impl ApiResponseContentBase for Upstream {
+        fn status_code(&self) -> StatusCode {
+            self.status_code
+        }
+    }
+
+    impl ApiResponseContentFailure for Upstream {
+        fn identifier(&self) -> &'static str {
+            "UPSTREAM"
+        }
+        fn reason(&self) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_failure_can_carry_a_status_code_decided_at_runtime() {
+        for status_code in [StatusCode::BAD_GATEWAY, StatusCode::from_u16(499).unwrap()] {
+            let response: ApiResponse<Infallible, Upstream> =
+                ApiResponse::failure(Upstream { status_code });
+            assert_eq!(response.content.status_code(), status_code);
         }
     }
 }

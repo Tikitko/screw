@@ -206,8 +206,8 @@ enum ProfileSuccess {
 }
 
 impl ApiResponseContentBase for ProfileSuccess {
-    fn status_code(&self) -> &'static StatusCode {
-        &StatusCode::OK
+    fn status_code(&self) -> StatusCode {
+        StatusCode::OK
     }
 }
 
@@ -235,8 +235,8 @@ enum StatsSuccess {
 }
 
 impl ApiResponseContentBase for StatsSuccess {
-    fn status_code(&self) -> &'static StatusCode {
-        &StatusCode::OK
+    fn status_code(&self) -> StatusCode {
+        StatusCode::OK
     }
 }
 
@@ -262,10 +262,10 @@ enum AccessFailure {
 }
 
 impl ApiResponseContentBase for AccessFailure {
-    fn status_code(&self) -> &'static StatusCode {
+    fn status_code(&self) -> StatusCode {
         match self {
-            Self::Unauthorized => &StatusCode::UNAUTHORIZED,
-            Self::Forbidden => &StatusCode::FORBIDDEN,
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
         }
     }
 }

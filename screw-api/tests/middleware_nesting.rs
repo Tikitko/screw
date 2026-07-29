@@ -33,8 +33,8 @@ macro_rules! success {
     ($name:ident, $id:literal) => {
         struct $name;
         impl ApiResponseContentBase for $name {
-            fn status_code(&self) -> &'static StatusCode {
-                &StatusCode::OK
+            fn status_code(&self) -> StatusCode {
+                StatusCode::OK
             }
         }
         impl ApiResponseContentSuccess for $name {
@@ -56,8 +56,8 @@ macro_rules! failure {
     ($name:ident, $id:literal) => {
         struct $name;
         impl ApiResponseContentBase for $name {
-            fn status_code(&self) -> &'static StatusCode {
-                &StatusCode::BAD_REQUEST
+            fn status_code(&self) -> StatusCode {
+                StatusCode::BAD_REQUEST
             }
         }
         impl ApiResponseContentFailure for $name {

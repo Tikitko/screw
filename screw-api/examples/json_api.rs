@@ -102,10 +102,10 @@ enum NoteSuccess {
 }
 
 impl ApiResponseContentBase for NoteSuccess {
-    fn status_code(&self) -> &'static StatusCode {
+    fn status_code(&self) -> StatusCode {
         match self {
-            Self::Found(_) => &StatusCode::OK,
-            Self::Created(_) => &StatusCode::CREATED,
+            Self::Found(_) => StatusCode::OK,
+            Self::Created(_) => StatusCode::CREATED,
         }
     }
 }
@@ -139,10 +139,10 @@ enum NoteFailure {
 }
 
 impl ApiResponseContentBase for NoteFailure {
-    fn status_code(&self) -> &'static StatusCode {
+    fn status_code(&self) -> StatusCode {
         match self {
-            Self::BadId | Self::MalformedBody(_) | Self::EmptyTitle => &StatusCode::BAD_REQUEST,
-            Self::NotFound => &StatusCode::NOT_FOUND,
+            Self::BadId | Self::MalformedBody(_) | Self::EmptyTitle => StatusCode::BAD_REQUEST,
+            Self::NotFound => StatusCode::NOT_FOUND,
         }
     }
 }
@@ -224,8 +224,8 @@ async fn create_note(
 struct HealthSuccess;
 
 impl ApiResponseContentBase for HealthSuccess {
-    fn status_code(&self) -> &'static StatusCode {
-        &StatusCode::OK
+    fn status_code(&self) -> StatusCode {
+        StatusCode::OK
     }
 }
 
