@@ -31,6 +31,10 @@ xml = ["derive-error", "async-trait", "quick-xml", "http-body-util"]
 name = "middleware_nesting"
 required-features = ["json"]
 
+[[test]]
+name = "end_to_end"
+required-features = ["json"]
+
 [[example]]
 name = "json_api"
 required-features = ["json"]
