@@ -36,8 +36,8 @@ pub mod first {
     use screw_components::dyn_result::DResult;
     use serde::Serialize;
     use std::future::Future;
-    use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::WebSocketStream;
+    use tokio_tungstenite::tungstenite::Message;
 
     pub struct ApiChannelSender {
         sink: SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>,
@@ -95,8 +95,8 @@ pub mod second {
     use futures::stream::SplitSink;
     use screw_components::dyn_result::DResult;
     use serde::Serialize;
-    use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::WebSocketStream;
+    use tokio_tungstenite::tungstenite::Message;
 
     pub struct ApiChannelSender<Send>
     where

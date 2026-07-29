@@ -1,5 +1,5 @@
 use super::super::*;
-use futures::{future, StreamExt};
+use futures::{StreamExt, future};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use screw_ws::WebSocketStreamConverter;
