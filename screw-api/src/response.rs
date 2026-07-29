@@ -3,6 +3,10 @@ use serde::ser::SerializeStructVariant;
 use serde::{Serialize, Serializer};
 use std::convert::Infallible;
 
+/// The status code a response content answers with.
+///
+/// Returned by value, so a variant may carry a code decided at runtime rather
+/// than only naming a constant.
 pub trait ApiResponseContentBase {
     fn status_code(&self) -> StatusCode;
 }
@@ -13,6 +17,10 @@ impl ApiResponseContentBase for Infallible {
     }
 }
 
+/// The success half of a handler's response.
+///
+/// Serialized as `{"success": {"identifier", "description", "data"}}`. Use
+/// [`Infallible`] as the type when an endpoint cannot succeed.
 pub trait ApiResponseContentSuccess: ApiResponseContentBase {
     type Data: Serialize;
     fn identifier(&self) -> &'static str;
@@ -33,6 +41,10 @@ impl ApiResponseContentSuccess for Infallible {
     }
 }
 
+/// The failure half of a handler's response.
+///
+/// Serialized as `{"failure": {"identifier", "reason"}}`. Use [`Infallible`] as
+/// the type when an endpoint cannot fail.
 pub trait ApiResponseContentFailure: ApiResponseContentBase {
     fn identifier(&self) -> &'static str;
     fn reason(&self) -> Option<String>;

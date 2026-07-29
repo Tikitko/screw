@@ -5,10 +5,21 @@ use screw_components::dyn_fn::DFn;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
+/// A request that has been through the router, carrying what the router learned
+/// about it alongside the original.
 pub struct RoutedRequest<ORq> {
+    /// Path parameters captured by the matched pattern. Percent escapes are
+    /// decoded except for `%2F`, `%25` and `%2B`, which stay encoded so that an
+    /// escaped separator cannot be mistaken for a real one.
     pub path: Path<String>,
+    /// The query string, parsed. Repeated keys keep the last value.
     pub query: HashMap<String, String>,
+    /// The methods the matched path does accept, filled in only when no route
+    /// matched. Non-empty means the path exists but the method is wrong -- a
+    /// 405 with this as the `Allow` header -- and empty means no such path,
+    /// which is a 404. Only the fallback handler ever sees this non-empty.
     pub allowed_methods: Vec<&'static Method>,
+    /// The request as it arrived, untouched.
     pub origin: ORq,
 }
 

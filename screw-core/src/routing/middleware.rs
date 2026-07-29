@@ -2,6 +2,21 @@ use screw_components::dyn_fn::DFnOnce;
 use std::future::Future;
 use std::sync::Arc;
 
+/// A step in a request's path to its handler, which may change the request and
+/// response types on the way.
+///
+/// The four types read as two pairs. `Self::Request` and `Self::Response` are
+/// what this middleware is handed and what it must produce -- its view of the
+/// outside. `Rq` and `Rs` are what it passes inward through `next` and gets back
+/// -- its view of whatever it wraps.
+///
+/// `Rq` and `Rs` are parameters of the trait rather than associated types on
+/// purpose: one converter can then serve endpoints of many different types,
+/// with a separate impl selected per route.
+///
+/// Implemented for `()`, which passes the request straight through, and for any
+/// `Fn(Rq, DFnOnce<Rq, Rs>) -> impl Future<Output = Rs>`, which is the form to
+/// reach for when a middleware does not change the types.
 #[async_trait]
 pub trait Middleware<Rq, Rs> {
     type Request;
@@ -9,6 +24,18 @@ pub trait Middleware<Rq, Rs> {
     async fn respond(&self, request: Self::Request, next: DFnOnce<Rq, Rs>) -> Self::Response;
 }
 
+/// Two middlewares run as one, `Outer` first.
+///
+/// This is what lets middlewares nest. `Outer` is handed the request and hands
+/// its own output type inward to `Inner`, so `Chained` accepts what `Outer`
+/// accepts and passes inward what `Inner` passes inward. Nesting a scope inside
+/// another wraps the chain in a further `Chained` rather than replacing it,
+/// which is why nested scopes keep the same outermost request and response
+/// types however deep they go.
+///
+/// Built by [`Routes::middleware`](super::routes::Routes::middleware) and
+/// [`Routes::scoped_middleware`](super::routes::Routes::scoped_middleware);
+/// there is rarely a reason to name it directly.
 pub struct Chained<Outer, Inner> {
     outer: Arc<Outer>,
     inner: Arc<Inner>,

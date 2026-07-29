@@ -4,6 +4,13 @@ use screw_components::dyn_fn::{DFn, DFnOnce};
 use std::future::Future;
 use std::sync::Arc;
 
+/// The set of routes being built, and the middleware chain they will sit under.
+///
+/// `ORq` and `ORs` are the types the router itself deals in and stay fixed for
+/// the whole tree; `M` is the middleware chain accumulated so far, and it is
+/// what grows as scopes nest. Each [`route`](Self::route) call resolves the
+/// chain against that route's own handler types, which is why two endpoints
+/// under the same middleware may take entirely different request types.
 pub struct Routes<ORq, ORs, M>
 where
     ORq: Send + 'static,
@@ -38,6 +45,7 @@ where
     ORs: Send + 'static,
     M: Send + Sync + 'static,
 {
+    /// Registers routes under a path prefix, leaving the middleware chain alone.
     pub fn scoped<F>(self, scope_path: &'static str, handler: F) -> Self
     where
         F: FnOnce(Routes<ORq, ORs, M>) -> Routes<ORq, ORs, M>,
@@ -54,6 +62,12 @@ where
         }
     }
 
+    /// Registers routes under a path prefix and an extra middleware.
+    ///
+    /// `middleware` runs innermost, after everything already in the chain. The
+    /// routes inside see a [`Chained`](middleware::Chained) built from the two,
+    /// so scopes can nest arbitrarily deep and each level may change the
+    /// request and response types.
     pub fn scoped_middleware<NM, F>(
         self,
         scope_path: &'static str,
@@ -86,6 +100,7 @@ where
         }
     }
 
+    /// [`scoped_middleware`](Self::scoped_middleware) without a path prefix.
     pub fn middleware<NM, F>(self, middleware: NM, handler: F) -> Self
     where
         NM: Send + Sync + 'static,
@@ -96,6 +111,16 @@ where
         self.scoped_middleware("", middleware, handler)
     }
 
+    /// Registers one route, binding the middleware chain to this handler.
+    ///
+    /// This is where the chain is resolved: the whole of `M` must convert the
+    /// router's `ORq`/`ORs` into whatever this handler takes and returns. The
+    /// last step across that gap is a plain conversion, `FRq: From<Rq>` and
+    /// `IRs: Into<Rs>`, so a handler can take a newtype over what the innermost
+    /// middleware produces without a middleware of its own.
+    ///
+    /// The chain is baked into the handler here, at registration. A request
+    /// that reaches this route cannot arrive without having gone through it.
     pub fn route<FRq, Rq, IRs, Rs, HFn, HFut>(
         self,
         route: route::third::Route<FRq, IRs, HFn, HFut>,
