@@ -3,6 +3,8 @@ pub type FResponderFactory<Extensions> = second::ResponderFactory<Extensions>;
 
 use super::*;
 use crate::body::ResponseBody;
+use crate::catch_unwind::catch_unwind;
+use hyper::StatusCode;
 use hyper::body::Incoming;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -102,9 +104,13 @@ where
                 extensions,
                 http: http_request,
             };
-            let response = router.process(request).await;
-            let http_response = response.http;
-            http_response
+            match catch_unwind(router.process(request)).await {
+                Ok(response) => response.http,
+                Err(_) => hyper::Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(crate::body::empty())
+                    .unwrap(),
+            }
         })
     }
 }
