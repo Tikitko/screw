@@ -132,8 +132,8 @@ enum EchoSuccess {
 }
 
 impl ApiResponseContentBase for EchoSuccess {
-    fn status_code(&self) -> &'static StatusCode {
-        &StatusCode::OK
+    fn status_code(&self) -> StatusCode {
+        StatusCode::OK
     }
 }
 
@@ -156,8 +156,8 @@ enum EchoFailure {
 }
 
 impl ApiResponseContentBase for EchoFailure {
-    fn status_code(&self) -> &'static StatusCode {
-        &StatusCode::BAD_REQUEST
+    fn status_code(&self) -> StatusCode {
+        StatusCode::BAD_REQUEST
     }
 }
 
@@ -309,18 +309,20 @@ ResponderFactory::with_router(router)
 A middleware implements `Middleware<Rq, Rs>`, where `Rq`/`Rs` are what it hands *inward* and the associated `Request`/`Response` types are what it accepts from *outside*:
 
 ```rust
-#[async_trait]
 pub trait Middleware<Rq, Rs> {
     type Request;
     type Response;
-    async fn respond(&self, request: Self::Request, next: DFnOnce<Rq, Rs>) -> Self::Response;
+    fn respond(
+        &self,
+        request: Self::Request,
+        next: DFnOnce<Rq, Rs>,
+    ) -> impl Future<Output = Self::Response> + Send;
 }
 ```
 
 Because the inward and outward types are independent, each nesting level can change them. That is how `JsonApiMiddlewareConverter` turns a `RoutedRequest<Request<Extensions>>` into a typed `ApiRequest<Content, Extensions>` — and how your own middleware can, say, wrap an `ApiRequest` into an `Authed<…>` that only authenticated handlers accept:
 
 ```rust
-#[async_trait]
 impl<Content, Ext, Success, Failure>
     Middleware<Authed<Content, Ext>, ApiResponse<Success, Failure>> for Auth
 where /* … */
@@ -392,7 +394,12 @@ JsonApiMiddlewareConverter {
 }
 ```
 
-Every rejection above lands in `data_result` as an `Err`, which your `ApiRequestContent` can inspect.
+Every rejection above lands in `data_result` as an `Err`, which your `ApiRequestContent` can inspect. A bad body never fails the request on its own — the handler decides what it means for that endpoint.
+
+Two more guarantees hold below the API layer, for any route:
+
+- a panic in a handler or middleware is caught and answered as `500`, leaving the connection usable. Without this a panic takes down the whole connection, including any other in-flight requests on it. The default panic hook still prints the message and backtrace;
+- registering two routes with the same pattern *and* the same method panics when the router is built — at startup, not per request — as does any route registered after a `with_any_method` route on that pattern. Overlap between *different* patterns stays legal and resolves in registration order.
 
 The XML layer is the same shape: swap `JsonApiMiddlewareConverter` for `XmlApiMiddlewareConverter` and nothing else in the example changes, since `Serialize`/`Deserialize` do the work either way.
 
@@ -474,7 +481,9 @@ cargo build --all-features
 cargo test --all-features
 ```
 
-`cargo test --all-features` also compiles every example, so they cannot drift from the crates. CI runs both on every push and pull request against `master`.
+`cargo test --all-features` also compiles every example, so they cannot drift from the crates.
+
+CI additionally enforces formatting and `clippy -D warnings`, and builds `screw-api` under each feature combination separately — no feature is on by default, so `--all-features` alone would leave most of them never compiled.
 
 ## License
 
