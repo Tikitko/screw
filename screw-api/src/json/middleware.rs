@@ -37,8 +37,9 @@ impl<RqContent, Extensions, RsContentSuccess, RsContentFailure>
         response::ApiResponse<RsContentSuccess, RsContentFailure>,
     > for JsonApiMiddlewareConverter
 where
-    RqContent: request::ApiRequestContent<Extensions> + Send + 'static,
-    <RqContent as request::ApiRequestContent<Extensions>>::Data: Sync + Send + 'static,
+    RqContent: request::ApiRequestContent<Extensions, RsContentFailure> + Send + 'static,
+    <RqContent as request::ApiRequestContent<Extensions, RsContentFailure>>::Data:
+        Sync + Send + 'static,
     Extensions: Sync + Send + 'static,
     RsContentSuccess: response::ApiResponseContentSuccess + Send + 'static,
     RsContentFailure: response::ApiResponseContentFailure + Send + 'static,
@@ -70,7 +71,7 @@ where
         let (http_parts, http_body) = routed_request.origin.http.into_parts();
         let data_result = convert(&http_parts, http_body, self.max_body_size).await;
 
-        let request_content = RqContent::create(request::ApiRequestOriginContent {
+        let request_content_result = RqContent::create(request::ApiRequestOriginContent {
             path: routed_request.path,
             query: routed_request.query,
             http_parts,
@@ -79,12 +80,16 @@ where
             data_result,
         });
 
-        let api_request = request::ApiRequest {
-            content: request_content,
-            _p_e: Default::default(),
+        let api_response = match request_content_result {
+            Ok(request_content) => {
+                next(request::ApiRequest {
+                    content: request_content,
+                    _p_e: Default::default(),
+                })
+                .await
+            }
+            Err(failure) => response::ApiResponse::failure(failure),
         };
-
-        let api_response = next(api_request).await;
 
         let http_response_result: DResult<hyper::Response<ResponseBody>> = (|| {
             let content = api_response.content;

@@ -13,19 +13,24 @@ use screw_core::routing::router::{self, RoutedRequest};
 
 struct Extensions;
 
+// `ContentA` is generic over the failure type and `ContentB` names one, on
+// purpose: routing has to resolve `Data` through either kind of impl.
 struct ContentA;
-impl ApiRequestContent<Extensions> for ContentA {
+impl<Failure> ApiRequestContent<Extensions, Failure> for ContentA
+where
+    Failure: ApiResponseContentFailure,
+{
     type Data = ();
-    fn create(_: ApiRequestOriginContent<Self::Data, Extensions>) -> Self {
-        ContentA
+    fn create(_: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, Failure> {
+        Ok(ContentA)
     }
 }
 
 struct ContentB;
-impl ApiRequestContent<Extensions> for ContentB {
+impl ApiRequestContent<Extensions, FailureB> for ContentB {
     type Data = ();
-    fn create(_: ApiRequestOriginContent<Self::Data, Extensions>) -> Self {
-        ContentB
+    fn create(_: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, FailureB> {
+        Ok(ContentB)
     }
 }
 
@@ -76,10 +81,7 @@ success!(SuccessB, "B");
 failure!(FailureA, "A_ERR");
 failure!(FailureB, "B_ERR");
 
-struct Authed<Content, Extensions>
-where
-    Content: ApiRequestContent<Extensions>,
-{
+struct Authed<Content, Extensions> {
     #[allow(dead_code)]
     request: ApiRequest<Content, Extensions>,
 }
@@ -89,7 +91,7 @@ struct Auth;
 impl<Content, Ext, Success, Failure> Middleware<Authed<Content, Ext>, ApiResponse<Success, Failure>>
     for Auth
 where
-    Content: ApiRequestContent<Ext> + Send + 'static,
+    Content: ApiRequestContent<Ext, Failure> + Send + 'static,
     Ext: Send + Sync + 'static,
     Success: ApiResponseContentSuccess + Send + 'static,
     Failure: ApiResponseContentFailure + Send + 'static,

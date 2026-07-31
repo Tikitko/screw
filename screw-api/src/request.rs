@@ -1,3 +1,4 @@
+use crate::response::ApiResponseContentFailure;
 use hyper::http::request::Parts;
 use screw_components::dyn_result::DResult;
 use screw_core::routing::actix::Path;
@@ -27,28 +28,38 @@ where
 /// body and a body over the size limit all arrive here as an error rather than
 /// failing the request, so the handler decides what a bad body means for that
 /// endpoint.
-pub trait ApiRequestContent<Extensions> {
-    type Data: for<'de> Deserialize<'de>;
-    fn create(origin_content: ApiRequestOriginContent<Self::Data, Extensions>) -> Self;
-}
-
-impl<Extensions> ApiRequestContent<Extensions> for () {
-    type Data = ();
-    fn create(_origin_content: ApiRequestOriginContent<Self::Data, Extensions>) -> Self {}
-}
-
-pub struct ApiRequest<Content, Extensions>
+///
+/// `create` may also refuse to build the content at all. `Failure` is the
+/// failure half of the response the handler answers with, so an `Err` is an
+/// ordinary failure response and the handler is never called.
+pub trait ApiRequestContent<Extensions, Failure>: Sized
 where
-    Content: ApiRequestContent<Extensions>,
+    Failure: ApiResponseContentFailure,
 {
+    type Data: for<'de> Deserialize<'de>;
+    fn create(
+        origin_content: ApiRequestOriginContent<Self::Data, Extensions>,
+    ) -> Result<Self, Failure>;
+}
+
+impl<Extensions, Failure> ApiRequestContent<Extensions, Failure> for ()
+where
+    Failure: ApiResponseContentFailure,
+{
+    type Data = ();
+    fn create(
+        _origin_content: ApiRequestOriginContent<Self::Data, Extensions>,
+    ) -> Result<Self, Failure> {
+        Ok(())
+    }
+}
+
+pub struct ApiRequest<Content, Extensions> {
     pub content: Content,
     pub(super) _p_e: PhantomData<Extensions>,
 }
 
-impl<Content, Extensions> From<ApiRequest<Content, Extensions>> for (Content,)
-where
-    Content: ApiRequestContent<Extensions>,
-{
+impl<Content, Extensions> From<ApiRequest<Content, Extensions>> for (Content,) {
     fn from(value: ApiRequest<Content, Extensions>) -> Self {
         (value.content,)
     }

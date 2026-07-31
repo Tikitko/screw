@@ -36,11 +36,30 @@ struct EchoContent {
     data: DResult<EchoData>,
 }
 
-impl ApiRequestContent<Extensions> for EchoContent {
+impl<Failure> ApiRequestContent<Extensions, Failure> for EchoContent
+where
+    Failure: ApiResponseContentFailure,
+{
     type Data = EchoData;
-    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Self {
-        Self {
+    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, Failure> {
+        Ok(Self {
             data: origin.data_result,
+        })
+    }
+}
+
+/// Refuses to be built when the request carries no `X-Echo` header.
+struct GuardedContent;
+
+impl ApiRequestContent<Extensions, EchoFailure> for GuardedContent {
+    type Data = ();
+    fn create(
+        origin: ApiRequestOriginContent<Self::Data, Extensions>,
+    ) -> Result<Self, EchoFailure> {
+        if origin.http_parts.headers.contains_key("x-echo") {
+            Ok(Self)
+        } else {
+            Err(EchoFailure("missing X-Echo".to_owned()))
         }
     }
 }
@@ -107,6 +126,14 @@ async fn echo_unpacked((content,): (EchoContent,)) -> Result<EchoSuccess, EchoFa
     }
 }
 
+async fn guarded(
+    _: ApiRequest<GuardedContent, Extensions>,
+) -> ApiResponse<EchoSuccess, EchoFailure> {
+    ApiResponse::success(EchoSuccess(Echoed {
+        message: "guarded".to_owned(),
+    }))
+}
+
 async fn fallback(_: RoutedRequest<ScrewRequest<Extensions>>) -> Response {
     Response {
         http: hyper::Response::builder()
@@ -133,6 +160,11 @@ async fn start_server() -> SocketAddr {
                 Route::with_method(&Method::POST)
                     .and_path("/echo-unpacked")
                     .and_handler(echo_unpacked),
+            )
+            .route(
+                Route::with_method(&Method::POST)
+                    .and_path("/guarded")
+                    .and_handler(guarded),
             )
         })
     });
@@ -174,6 +206,16 @@ async fn post_to(
     content_type: Option<&str>,
     body: &str,
 ) -> (StatusCode, hyper::HeaderMap, serde_json::Value) {
+    post_with_headers(addr, path, content_type, &[], body).await
+}
+
+async fn post_with_headers(
+    addr: SocketAddr,
+    path: &str,
+    content_type: Option<&str>,
+    extra_headers: &[(&str, &str)],
+    body: &str,
+) -> (StatusCode, hyper::HeaderMap, serde_json::Value) {
     let stream = TcpStream::connect(addr).await.unwrap();
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
@@ -186,6 +228,9 @@ async fn post_to(
         .header(hyper::header::HOST, "localhost");
     if let Some(content_type) = content_type {
         builder = builder.header(hyper::header::CONTENT_TYPE, content_type);
+    }
+    for (name, value) in extra_headers {
+        builder = builder.header(*name, *value);
     }
     let request = builder
         .body(screw_core::body::full(body.to_owned()))
@@ -245,6 +290,39 @@ async fn an_err_from_such_a_handler_becomes_a_failure_response() {
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(json["failure"]["identifier"], "BAD_BODY");
+}
+
+#[tokio::test]
+async fn a_content_that_refuses_to_be_built_answers_as_a_failure() {
+    let addr = start_server().await;
+
+    let (status, headers, json) =
+        post_with_headers(addr, "/api/guarded", Some("application/json"), &[], "{}").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        headers.get(hyper::header::CONTENT_TYPE).unwrap(),
+        "application/json"
+    );
+    assert_eq!(json["failure"]["identifier"], "BAD_BODY");
+    assert_eq!(json["failure"]["reason"], "missing X-Echo");
+}
+
+#[tokio::test]
+async fn the_handler_runs_once_the_content_is_built() {
+    let addr = start_server().await;
+
+    let (status, _, json) = post_with_headers(
+        addr,
+        "/api/guarded",
+        Some("application/json"),
+        &[("x-echo", "yes")],
+        "{}",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["success"]["data"]["message"], "guarded");
 }
 
 #[tokio::test]
