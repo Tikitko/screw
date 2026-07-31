@@ -81,9 +81,14 @@ struct PlainContent {
     token: Option<String>,
 }
 
-impl ApiRequestContent<Extensions> for PlainContent {
+/// Generic over the failure type, because both endpoints below share this
+/// content and it never refuses a request itself.
+impl<Failure> ApiRequestContent<Extensions, Failure> for PlainContent
+where
+    Failure: ApiResponseContentFailure,
+{
     type Data = ();
-    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Self {
+    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, Failure> {
         let token = origin
             .http_parts
             .headers
@@ -91,10 +96,10 @@ impl ApiRequestContent<Extensions> for PlainContent {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "))
             .map(str::to_owned);
-        Self {
+        Ok(Self {
             extensions: origin.extensions,
             token,
-        }
+        })
     }
 }
 
@@ -149,7 +154,7 @@ struct Auth;
 impl<Content, Extensions, Success, Failure>
     Middleware<Authed<Content, Extensions>, ApiResponse<Success, Failure>> for Auth
 where
-    Content: ApiRequestContent<Extensions> + Authorizable + Send + 'static,
+    Content: ApiRequestContent<Extensions, Failure> + Authorizable + Send + 'static,
     Extensions: Send + Sync + 'static,
     Success: ApiResponseContentSuccess + Send + 'static,
     Failure: ApiResponseContentFailure + AuthFailure + Send + 'static,

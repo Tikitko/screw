@@ -4,15 +4,20 @@
 //! serializes `ApiResponse` back out, so handlers only deal with their own
 //! types.
 //!
+//! A failure can come from either half, and both look the same from outside:
+//! `create` refuses a request it cannot build a content from; the handler
+//! answers for everything that depends on the value.
+//!
 //! ```sh
 //! cargo run -p screw-api --example json_api --features json
 //!
 //! curl -s localhost:8080/api/notes/1
+//! curl -s localhost:8080/api/notes/abc                 # BAD_ID, from `create`
 //! curl -s -X POST localhost:8080/api/notes \
 //!     -H 'Content-Type: application/json' -d '{"title":"first","body":"hi"}'
 //! curl -s -X POST localhost:8080/api/notes \
 //!     -H 'Content-Type: application/json' -d '{"title":"","body":"hi"}'
-//! curl -s -X POST localhost:8080/api/notes -d 'not json'   # wrong Content-Type
+//! curl -s -X POST localhost:8080/api/notes -d 'not json'   # MALFORMED_BODY
 //! ```
 
 use hyper::{Method, StatusCode};
@@ -22,7 +27,6 @@ use screw_api::request::{ApiRequest, ApiRequestContent, ApiRequestOriginContent}
 use screw_api::response::{
     ApiResponse, ApiResponseContentBase, ApiResponseContentFailure, ApiResponseContentSuccess,
 };
-use screw_components::dyn_result::DResult;
 use screw_core::request::Request;
 use screw_core::responder_factory::ResponderFactory;
 use screw_core::response::Response;
@@ -55,19 +59,28 @@ struct Extensions {
 
 // ---------------------------------------------------------------- requests
 
-/// `GET /api/notes/{id}` — no body, so `Data` is `()`.
+/// `GET /api/notes/{id}` — no body, so `Data` is `()`. An unparseable id is
+/// refused here rather than in the handler, which is why `id` is a `u64` and
+/// not an `Option<u64>`.
 struct ReadNoteContent {
-    id: Option<u64>,
+    id: u64,
     extensions: Arc<Extensions>,
 }
 
-impl ApiRequestContent<Extensions> for ReadNoteContent {
+impl ApiRequestContent<Extensions, NoteFailure> for ReadNoteContent {
     type Data = ();
-    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Self {
-        Self {
-            id: origin.path.get("id").and_then(|id| id.parse().ok()),
+    fn create(
+        origin: ApiRequestOriginContent<Self::Data, Extensions>,
+    ) -> Result<Self, NoteFailure> {
+        let id = origin
+            .path
+            .get("id")
+            .and_then(|id| id.parse().ok())
+            .ok_or(NoteFailure::BadId)?;
+        Ok(Self {
+            id,
             extensions: origin.extensions,
-        }
+        })
     }
 }
 
@@ -77,20 +90,28 @@ struct CreateNoteData {
     body: String,
 }
 
-/// `POST /api/notes` — the parsed body arrives as a `DResult`, so a malformed
-/// request is something the handler answers rather than a hard failure.
+/// `POST /api/notes` — a note without a readable body is nothing at all, so the
+/// body is settled here too and the handler gets a `CreateNoteData` rather than
+/// another `Result`. Carrying `data_result` on untouched stays the right answer
+/// when a bad body is *not* an unconditional refusal.
 struct CreateNoteContent {
-    data: DResult<CreateNoteData>,
+    data: CreateNoteData,
     extensions: Arc<Extensions>,
 }
 
-impl ApiRequestContent<Extensions> for CreateNoteContent {
+impl ApiRequestContent<Extensions, NoteFailure> for CreateNoteContent {
     type Data = CreateNoteData;
-    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Self {
-        Self {
-            data: origin.data_result,
+    fn create(
+        origin: ApiRequestOriginContent<Self::Data, Extensions>,
+    ) -> Result<Self, NoteFailure> {
+        // Wrong `Content-Type`, oversized, or unparseable body all land here.
+        let data = origin
+            .data_result
+            .map_err(|error| NoteFailure::MalformedBody(error.to_string()))?;
+        Ok(Self {
+            data,
             extensions: origin.extensions,
-        }
+        })
     }
 }
 
@@ -177,11 +198,13 @@ async fn read_note(
 ) -> Result<NoteSuccess, NoteFailure> {
     let content = request.content;
 
-    let Some(id) = content.id else {
-        return Err(NoteFailure::BadId);
-    };
-
-    let note = content.extensions.notes.lock().unwrap().get(&id).cloned();
+    let note = content
+        .extensions
+        .notes
+        .lock()
+        .unwrap()
+        .get(&content.id)
+        .cloned();
 
     note.map(NoteSuccess::Found).ok_or(NoteFailure::NotFound)
 }
@@ -190,13 +213,10 @@ async fn create_note(
     request: ApiRequest<CreateNoteContent, Extensions>,
 ) -> ApiResponse<NoteSuccess, NoteFailure> {
     let content = request.content;
+    let data = content.data;
 
-    let data = match content.data {
-        Ok(data) => data,
-        // Wrong `Content-Type`, oversized, or unparseable body all land here.
-        Err(error) => return ApiResponse::failure(NoteFailure::MalformedBody(error.to_string())),
-    };
-
+    // A rule about the value rather than the shape of the request, so it stays
+    // with the handler.
     if data.title.trim().is_empty() {
         return ApiResponse::failure(NoteFailure::EmptyTitle);
     }

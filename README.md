@@ -108,14 +108,16 @@ struct EchoRequestContent {
     greeting: String,
 }
 
-impl ApiRequestContent<Extensions> for EchoRequestContent {
+impl ApiRequestContent<Extensions, EchoFailure> for EchoRequestContent {
     type Data = EchoData;
-    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Self {
-        Self {
+    fn create(
+        origin: ApiRequestOriginContent<Self::Data, Extensions>,
+    ) -> Result<Self, EchoFailure> {
+        Ok(Self {
             id: origin.path.get("id").unwrap_or_default().to_owned(),
             data: origin.data_result,
             greeting: origin.extensions.greeting.clone(),
-        }
+        })
     }
 }
 
@@ -354,7 +356,7 @@ async fn logging(request: Mid, next: DFnOnce<Mid, MidRs>) -> MidRs {
 
 ## The API layer
 
-`ApiRequestContent<Extensions>` is the bridge from a raw request to your handler's argument. Its `create` gets everything the server knows:
+`ApiRequestContent<Extensions, Failure>` is the bridge from a raw request to your handler's argument. Its `create` gets everything the server knows:
 
 ```rust
 pub struct ApiRequestOriginContent<Data, Extensions> {
@@ -367,7 +369,22 @@ pub struct ApiRequestOriginContent<Data, Extensions> {
 }
 ```
 
-Body parsing is *not* fatal: `data_result` is a `DResult<Data>`, so a bad body reaches your handler as an `Err` and you decide the response. `()` implements `ApiRequestContent`, which is convenient for endpoints that ignore the request entirely.
+Body parsing is *not* fatal: `data_result` is a `DResult<Data>`, so a bad body reaches you as an `Err` and you decide the response — carry it into the handler, or `map_err` it into a failure right in `create`. `()` implements `ApiRequestContent`, which is convenient for endpoints that ignore the request entirely.
+
+`create` returns `Result<Self, Failure>`, and `Failure` is the failure half of the response the handler answers with, so a content that cannot be built — an id that will not parse, a missing header — refuses the request there and then: the handler is never called, and the client sees an ordinary failure response. A content written for one endpoint just names that endpoint's failure type; one meant to be reused stays generic over it, adding `From<…>` if it has an error of its own to convert:
+
+```rust
+impl<Extensions, Failure> ApiRequestContent<Extensions, Failure> for Authed
+where
+    Failure: ApiResponseContentFailure + From<AuthError>,
+{
+    type Data = ();
+    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, Failure> {
+        let token = bearer_token(&origin.http_parts).ok_or(AuthError::Missing)?;
+        Ok(Self { token })
+    }
+}
+```
 
 On the way out, `ApiResponse<Success, Failure>` is an enum of two content traits:
 
