@@ -78,7 +78,8 @@ where
             remote_addr: routed_request.origin.remote_addr,
             extensions: routed_request.origin.extensions,
             data_result,
-        });
+        })
+        .await;
 
         let api_response = match request_content_result {
             Ok(request_content) => {

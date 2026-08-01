@@ -21,7 +21,7 @@ where
     Failure: ApiResponseContentFailure,
 {
     type Data = ();
-    fn create(_: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, Failure> {
+    async fn create(_: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, Failure> {
         Ok(ContentA)
     }
 }
@@ -29,7 +29,7 @@ where
 struct ContentB;
 impl ApiRequestContent<Extensions, FailureB> for ContentB {
     type Data = ();
-    fn create(_: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, FailureB> {
+    async fn create(_: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, FailureB> {
         Ok(ContentB)
     }
 }

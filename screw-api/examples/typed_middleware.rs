@@ -88,7 +88,9 @@ where
     Failure: ApiResponseContentFailure,
 {
     type Data = ();
-    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, Failure> {
+    async fn create(
+        origin: ApiRequestOriginContent<Self::Data, Extensions>,
+    ) -> Result<Self, Failure> {
         let token = origin
             .http_parts
             .headers

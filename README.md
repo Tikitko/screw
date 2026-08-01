@@ -110,7 +110,7 @@ struct EchoRequestContent {
 
 impl ApiRequestContent<Extensions, EchoFailure> for EchoRequestContent {
     type Data = EchoData;
-    fn create(
+    async fn create(
         origin: ApiRequestOriginContent<Self::Data, Extensions>,
     ) -> Result<Self, EchoFailure> {
         Ok(Self {
@@ -371,17 +371,23 @@ pub struct ApiRequestOriginContent<Data, Extensions> {
 
 Body parsing is *not* fatal: `data_result` is a `DResult<Data>`, so a bad body reaches you as an `Err` and you decide the response — carry it into the handler, or `map_err` it into a failure right in `create`. `()` implements `ApiRequestContent`, which is convenient for endpoints that ignore the request entirely.
 
-`create` returns `Result<Self, Failure>`, and `Failure` is the failure half of the response the handler answers with, so a content that cannot be built — an id that will not parse, a missing header — refuses the request there and then: the handler is never called, and the client sees an ordinary failure response. A content written for one endpoint just names that endpoint's failure type; one meant to be reused stays generic over it, adding `From<…>` if it has an error of its own to convert:
+`create` returns `Result<Self, Failure>`, and `Failure` is the failure half of the response the handler answers with, so a content that cannot be built — an id that will not parse, a missing header, a token nothing knows about — refuses the request there and then: the handler is never called, and the client sees an ordinary failure response. It is `async`, so that decision may involve a lookup and is not limited to what the request itself carries.
+
+A content written for one endpoint just names that endpoint's failure type; one meant to be reused stays generic over it, adding `From<…>` if it has an error of its own to convert:
 
 ```rust
 impl<Extensions, Failure> ApiRequestContent<Extensions, Failure> for Authed
 where
+    Extensions: SessionStore + Send + Sync,
     Failure: ApiResponseContentFailure + From<AuthError>,
 {
     type Data = ();
-    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, Failure> {
+    async fn create(
+        origin: ApiRequestOriginContent<Self::Data, Extensions>,
+    ) -> Result<Self, Failure> {
         let token = bearer_token(&origin.http_parts).ok_or(AuthError::Missing)?;
-        Ok(Self { token })
+        let user = origin.extensions.user_for(token).await.ok_or(AuthError::Unknown)?;
+        Ok(Self { user })
     }
 }
 ```
