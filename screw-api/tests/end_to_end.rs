@@ -14,13 +14,25 @@ use screw_core::routing::route::first::Route;
 use screw_core::routing::router::{self, RoutedRequest};
 use screw_core::server::ServerService;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 
 const MAX_BODY_SIZE: usize = 64;
 
-struct Extensions;
+#[derive(Default)]
+struct Extensions {
+    tokens: tokio::sync::Mutex<HashSet<String>>,
+}
+
+impl Extensions {
+    /// Awaited from `create`, so the lookup happens before the handler is
+    /// reached rather than inside it.
+    async fn is_known(&self, token: &str) -> bool {
+        self.tokens.lock().await.contains(token)
+    }
+}
 
 #[derive(Deserialize)]
 struct EchoData {
@@ -41,25 +53,35 @@ where
     Failure: ApiResponseContentFailure,
 {
     type Data = EchoData;
-    fn create(origin: ApiRequestOriginContent<Self::Data, Extensions>) -> Result<Self, Failure> {
+    async fn create(
+        origin: ApiRequestOriginContent<Self::Data, Extensions>,
+    ) -> Result<Self, Failure> {
         Ok(Self {
             data: origin.data_result,
         })
     }
 }
 
-/// Refuses to be built when the request carries no `X-Echo` header.
+/// Refuses to be built unless the request carries an `X-Echo` token the
+/// extensions know about, which it has to await to find out.
 struct GuardedContent;
 
 impl ApiRequestContent<Extensions, EchoFailure> for GuardedContent {
     type Data = ();
-    fn create(
+    async fn create(
         origin: ApiRequestOriginContent<Self::Data, Extensions>,
     ) -> Result<Self, EchoFailure> {
-        if origin.http_parts.headers.contains_key("x-echo") {
+        let token = origin
+            .http_parts
+            .headers
+            .get("x-echo")
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| EchoFailure("missing X-Echo".to_owned()))?;
+
+        if origin.extensions.is_known(token).await {
             Ok(Self)
         } else {
-            Err(EchoFailure("missing X-Echo".to_owned()))
+            Err(EchoFailure(format!("unknown token {token}")))
         }
     }
 }
@@ -169,7 +191,10 @@ async fn start_server() -> SocketAddr {
         })
     });
 
-    let responder_factory = ResponderFactory::with_router(router).and_extensions(Extensions);
+    let extensions = Extensions::default();
+    extensions.tokens.lock().await.insert("yes".to_owned());
+
+    let responder_factory = ResponderFactory::with_router(router).and_extensions(extensions);
     let server_service = Arc::new(ServerService::with_responder_factory(responder_factory));
 
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
@@ -323,6 +348,24 @@ async fn the_handler_runs_once_the_content_is_built() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["success"]["data"]["message"], "guarded");
+}
+
+#[tokio::test]
+async fn a_content_may_await_before_deciding_to_refuse() {
+    let addr = start_server().await;
+
+    let (status, _, json) = post_with_headers(
+        addr,
+        "/api/guarded",
+        Some("application/json"),
+        &[("x-echo", "no-such-token")],
+        "{}",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["failure"]["identifier"], "BAD_BODY");
+    assert_eq!(json["failure"]["reason"], "unknown token no-such-token");
 }
 
 #[tokio::test]

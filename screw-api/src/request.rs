@@ -3,6 +3,7 @@ use hyper::http::request::Parts;
 use screw_components::dyn_result::DResult;
 use screw_core::routing::actix::Path;
 use serde::Deserialize;
+use std::future::Future;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,6 +33,10 @@ where
 /// `create` may also refuse to build the content at all. `Failure` is the
 /// failure half of the response the handler answers with, so an `Err` is an
 /// ordinary failure response and the handler is never called.
+///
+/// It is `async`, so a content may reach for whatever it needs to answer that
+/// question -- `extensions` is right there -- rather than only for what the
+/// request itself carries.
 pub trait ApiRequestContent<Extensions, Failure>: Sized
 where
     Failure: ApiResponseContentFailure,
@@ -39,15 +44,16 @@ where
     type Data: for<'de> Deserialize<'de>;
     fn create(
         origin_content: ApiRequestOriginContent<Self::Data, Extensions>,
-    ) -> Result<Self, Failure>;
+    ) -> impl Future<Output = Result<Self, Failure>> + Send;
 }
 
 impl<Extensions, Failure> ApiRequestContent<Extensions, Failure> for ()
 where
+    Extensions: Send + Sync,
     Failure: ApiResponseContentFailure,
 {
     type Data = ();
-    fn create(
+    async fn create(
         _origin_content: ApiRequestOriginContent<Self::Data, Extensions>,
     ) -> Result<Self, Failure> {
         Ok(())

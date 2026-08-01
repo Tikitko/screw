@@ -69,7 +69,7 @@ struct ReadNoteContent {
 
 impl ApiRequestContent<Extensions, NoteFailure> for ReadNoteContent {
     type Data = ();
-    fn create(
+    async fn create(
         origin: ApiRequestOriginContent<Self::Data, Extensions>,
     ) -> Result<Self, NoteFailure> {
         let id = origin
@@ -101,7 +101,7 @@ struct CreateNoteContent {
 
 impl ApiRequestContent<Extensions, NoteFailure> for CreateNoteContent {
     type Data = CreateNoteData;
-    fn create(
+    async fn create(
         origin: ApiRequestOriginContent<Self::Data, Extensions>,
     ) -> Result<Self, NoteFailure> {
         // Wrong `Content-Type`, oversized, or unparseable body all land here.
